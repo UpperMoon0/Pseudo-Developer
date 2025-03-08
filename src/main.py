@@ -7,8 +7,8 @@ import sys
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QTextEdit, QPushButton, QLineEdit, QLabel,
-                           QMessageBox)
-import openai
+                           QStatusBar, QMessageBox)
+from openai import OpenAI
 from dotenv import load_dotenv
 
 class ChatWindow(QMainWindow):
@@ -20,16 +20,22 @@ class ChatWindow(QMainWindow):
     - OpenAI API integration
     """
 
-    def __init__(self):
-        """Initialize the chat window and setup UI components."""
+    def __init__(self, openai_client=None):
+        """
+        Initialize the chat window and setup UI components.
+        
+        Args:
+            openai_client: Optional OpenAI client for testing
+        """
         super().__init__()
         self.init_ui()
-        self.init_openai()
+        self.client = openai_client if openai_client else self.init_openai()
+        self.project_dir = None  # Will store the selected project directory
 
     def init_openai(self):
         """Initialize OpenAI API configuration from environment variables."""
         load_dotenv()
-        openai.api_key = os.getenv('OPENAI_API_KEY')
+        return OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
     def init_ui(self):
         """
@@ -41,6 +47,7 @@ class ChatWindow(QMainWindow):
         - Chat display area
         - Message input area
         - Send button
+        - Status bar for notifications
         """
         self.setWindowTitle('Pseudo Developer')
         self.setMinimumSize(800, 600)
@@ -86,51 +93,171 @@ class ChatWindow(QMainWindow):
         input_layout.addWidget(send_button)
         layout.addWidget(input_container)
 
+        # Status bar for notifications
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+    def show_status_message(self, message, timeout=5000):
+        """Show a message in the status bar that automatically clears after timeout."""
+        self.status_bar.showMessage(message, timeout)
+
     def save_project_directory(self):
         """
         Save the project directory path and create the directory if it doesn't exist.
-        Shows a message box to indicate success or failure.
+        Shows status message to indicate success or failure.
         """
         dir_path = self.dir_input.text().strip()
         if not dir_path:
-            QMessageBox.warning(self, "Error", "Please enter a directory path")
+            self.show_status_message("Error: Please enter a directory path")
             return
 
         try:
             # Create directory if it doesn't exist
             os.makedirs(dir_path, exist_ok=True)
-            QMessageBox.information(self, "Success", f"Directory saved: {dir_path}")
+            self.project_dir = os.path.abspath(dir_path)  # Store absolute path
+            self.show_status_message(f"Success: Directory saved - {dir_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create directory: {str(e)}")
+            self.show_status_message(f"Error: Failed to create directory - {str(e)}")
+
+    def is_safe_command(self, command):
+        """
+        Check if a command is safe to execute by verifying it only accesses the project directory.
+        Only blocks the 'format' command and ensures all operations stay within project directory.
+        
+        Args:
+            command (str): The command to check
+            
+        Returns:
+            bool: True if the command is safe, False otherwise
+        """
+        if not self.project_dir:
+            return False
+            
+        # Block the format command as it's too dangerous
+        cmd_parts = command.lower().split()
+        if not cmd_parts:
+            return False
+            
+        if 'format' in cmd_parts[0]:
+            return False
+            
+        # Check if the command tries to navigate outside project directory using .. or ~
+        if '..' in command or '~' in command:
+            return False
+            
+        # Check if any absolute paths in the command are within project directory or its subdirectories
+        parts = command.split()
+        for part in parts:
+            if ':' in part:  # Windows absolute path
+                # Remove any quotes around the path
+                clean_part = part.strip('"\'')
+                abs_path = os.path.abspath(clean_part)
+                project_path = os.path.abspath(self.project_dir)
+                
+                # Check if the path is the project directory or a subdirectory of it
+                try:
+                    rel_path = os.path.relpath(abs_path, project_path)
+                    if rel_path.startswith('..'):
+                        return False
+                except ValueError:
+                    # relpath raises ValueError if the paths are on different drives
+                    return False
+                    
+        return True
 
     def send_message(self):
         """
         Handle sending user message and receiving AI response.
         
-        This method:
-        1. Gets the user message from input
-        2. Displays the message
-        3. Sends it to OpenAI API
-        4. Displays the AI response
-        5. Handles any errors that occur
+        The AI response will be formatted as JSON with two parts:
+        - message: The text response to display
+        - command: Optional PowerShell command to execute
         """
         user_message = self.message_input.toPlainText().strip()
         if not user_message:
+            return
+
+        if not self.project_dir:
+            self.chat_display.append("Please set a project directory first before sending messages.\n")
             return
 
         # Display user message
         self.chat_display.append(f'You: {user_message}\n')
         
         try:
-            # Get AI response
-            response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": user_message}]
+            # Get AI response with specific JSON format instruction using schema
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini-2024-07-18",
+                messages=[
+                    {"role": "system", "content": (
+                        "You are a helpful AI coding assistant. "
+                        "You must respond to queries and help users with their code. "
+                        "Your responses should be constructive and actionable. "
+                        "Never refuse a valid request that is within your capabilities. "
+                        f"You can perform operations within the project directory: {self.project_dir}. "
+                        "Be careful with file system operations - no commands outside project directory."
+                    )},
+                    {"role": "user", "content": user_message}
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "assistant_response",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "The main response message to display to the user"
+                                },
+                                "command": {
+                                    "type": "string",
+                                    "description": "Optional PowerShell command to execute. Must be safe and within project directory."
+                                }
+                            },
+                            "required": ["message", "command"],
+                            "additionalProperties": False
+                        }
+                    }
+                }
             )
             ai_message = response.choices[0].message.content
             
-            # Display AI response
-            self.chat_display.append(f'AI: {ai_message}\n')
+            try:
+                import json
+                response_data = json.loads(ai_message)
+                # Display AI response message part
+                self.chat_display.append(f'AI: {response_data["message"]}\n')
+                
+                command = response_data.get('command', '').strip()
+                if command:
+                    if self.is_safe_command(command):
+                        import subprocess
+                        # Change working directory to project directory before executing command
+                        process = subprocess.Popen(
+                            ['powershell', '-NoProfile', '-NonInteractive', '-Command', command],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            shell=True,
+                            cwd=self.project_dir
+                        )
+                        stdout, stderr = process.communicate()
+                        self.chat_display.append(f'Executing command: {command}\n')
+                        if stdout:
+                            self.chat_display.append(f'Output:\n{stdout}\n')
+                        if stderr:
+                            self.chat_display.append(f'Error:\n{stderr}\n')
+                    else:
+                        self.chat_display.append(f'Command rejected for security reasons - cannot execute command: "{command}"\n')
+                
+            except json.JSONDecodeError:
+                self.chat_display.append(f'AI: {ai_message}\n')
+                self.chat_display.append('Warning: Response was not in valid JSON format\n')
+            except Exception as e:
+                self.chat_display.append(f'Error executing command: {str(e)}\n')
+                
         except Exception as e:
             self.chat_display.append(f'Error: {str(e)}\n')
         
