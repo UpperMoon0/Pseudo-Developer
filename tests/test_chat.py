@@ -126,10 +126,16 @@ def test_json_response_format(mock_popen, chat_window_with_project, mock_openai_
     chat_window_with_project.send_message()
     
     # Verify JSON parsing and command execution
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert 'You: Test command' in display_content
-    assert 'Test message' in display_content
-    assert 'Executing command: dir' in display_content
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat display should have conversation
+    assert 'You: Test command' in chat_content
+    assert 'Test message' in chat_content
+    
+    # Command display should have command output
+    assert 'Executing command: dir' in cmd_content
+    assert 'Directory listing' in cmd_content
     mock_popen.assert_called_once()
 
 def test_invalid_json_response(chat_window_with_project, mock_openai_client):
@@ -144,10 +150,15 @@ def test_invalid_json_response(chat_window_with_project, mock_openai_client):
     chat_window_with_project.send_message()
     
     # Verify error handling
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert 'You: Test invalid JSON' in display_content
-    assert 'AI: Invalid JSON' in display_content
-    assert 'Warning: Response was not in valid JSON format' in display_content
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should have conversation
+    assert 'You: Test invalid JSON' in chat_content
+    assert 'AI: Invalid JSON' in chat_content
+    
+    # Command display should have warning
+    assert 'Warning: Response was not in valid JSON format' in cmd_content
 
 def test_empty_command_not_executed(mock_popen, chat_window_with_project, mock_openai_client):
     """Test that empty commands are not executed."""
@@ -244,9 +255,16 @@ def test_unsafe_command_not_executed(mock_popen, chat_window_with_project, mock_
     chat_window_with_project.send_message()
     
     # Verify command was not executed
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert "Command rejected for security reasons" in display_content
-    assert f'"{unsafe_command}"' in display_content
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should have conversation
+    assert 'You: Test unsafe command' in chat_content
+    assert 'AI: Test' in chat_content
+    
+    # Command display should have rejection message
+    assert 'Command rejected for security reasons' in cmd_content
+    assert f'"{unsafe_command}"' in cmd_content
     mock_popen.assert_not_called()
 
 def test_command_output_display(mock_popen, chat_window_with_project, mock_openai_client):
@@ -266,10 +284,15 @@ def test_command_output_display(mock_popen, chat_window_with_project, mock_opena
     chat_window_with_project.send_message()
     
     # Verify output display
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert "Running directory listing" in display_content
-    assert "Executing command: dir" in display_content
-    assert "Output:\nDirectory listing output" in display_content
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should only have conversation
+    assert "Running directory listing" in chat_content
+    
+    # Command display should have command output
+    assert "Executing command: dir" in cmd_content
+    assert "Output:\nDirectory listing output" in cmd_content
 
 def test_command_error_display(mock_popen, chat_window_with_project, mock_openai_client):
     """Test that command errors are properly displayed."""
@@ -288,7 +311,116 @@ def test_command_error_display(mock_popen, chat_window_with_project, mock_openai
     chat_window_with_project.send_message()
     
     # Verify error display
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert "Attempting command" in display_content
-    assert "Executing command: invalid_cmd" in display_content
-    assert "Error:\nCommand not found" in display_content
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should only have conversation
+    assert "Attempting command" in chat_content
+    
+    # Command display should have error output
+    assert "Executing command: invalid_cmd" in cmd_content
+    assert "Error:\nCommand not found" in cmd_content
+
+def test_message_history_limit(chat_window_with_project, mock_openai_client):
+    """Test that message history is limited to 10 pairs (20 messages total)."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = '{"message": "Response", "command": ""}'
+    mock_openai_client.chat.completions.create.return_value = mock_response
+    
+    # Send 15 messages (more than the limit)
+    for i in range(15):
+        chat_window_with_project.message_input.setText(f"Message {i}")
+        chat_window_with_project.send_message()
+    
+    # Verify only last 20 messages (10 pairs) are kept
+    assert len(chat_window_with_project.message_history) == 20
+    # Verify oldest messages are removed
+    first_message = chat_window_with_project.message_history[0]
+    assert first_message[1] == "Message 5"  # First user message should be #5
+
+def test_command_output_separate_display(mock_popen, chat_window_with_project, mock_openai_client):
+    """Test that command output goes to command display, not chat display."""
+    # Setup mock client and process
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = '{"message": "Running ls", "command": "dir"}'
+    mock_openai_client.chat.completions.create.return_value = mock_response
+    
+    # Mock process output
+    process_mock = MagicMock()
+    process_mock.communicate.return_value = ("Directory listing", "")
+    mock_popen.return_value = process_mock
+    
+    # Send test message
+    chat_window_with_project.message_input.setText("List files")
+    chat_window_with_project.send_message()
+    
+    # Verify separation of outputs
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should only have conversation
+    assert "You: List files" in chat_content
+    assert "AI: Running ls" in chat_content
+    assert "Directory listing" not in chat_content
+    
+    # Command display should have command output
+    assert "Executing command: dir" in cmd_content
+    assert "Output:\nDirectory listing" in cmd_content
+
+def test_command_error_separate_display(mock_popen, chat_window_with_project, mock_openai_client):
+    """Test that command errors go to command display, not chat display."""
+    # Setup mock client and process
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = '{"message": "Running command", "command": "invalid"}'
+    mock_openai_client.chat.completions.create.return_value = mock_response
+    
+    # Mock process error
+    process_mock = MagicMock()
+    process_mock.communicate.return_value = ("", "Command not found")
+    mock_popen.return_value = process_mock
+    
+    # Send test message
+    chat_window_with_project.message_input.setText("Run invalid command")
+    chat_window_with_project.send_message()
+    
+    # Verify separation of outputs
+    chat_content = chat_window_with_project.chat_display.toPlainText()
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    
+    # Chat should only have conversation
+    assert "You: Run invalid command" in chat_content
+    assert "AI: Running command" in chat_content
+    assert "Command not found" not in chat_content
+    
+    # Command display should have error output
+    assert "Executing command: invalid" in cmd_content
+    assert "Error:\nCommand not found" in cmd_content
+
+def test_command_display_separator(mock_popen, chat_window_with_project, mock_openai_client):
+    """Test that command outputs are separated by lines in command display."""
+    # First command
+    mock_response1 = MagicMock()
+    mock_response1.choices[0].message.content = '{"message": "First command", "command": "dir"}'
+    mock_openai_client.chat.completions.create.return_value = mock_response1
+    process_mock1 = MagicMock()
+    process_mock1.communicate.return_value = ("First output", "")
+    mock_popen.return_value = process_mock1
+    
+    chat_window_with_project.message_input.setText("First command")
+    chat_window_with_project.send_message()
+    
+    # Second command
+    mock_response2 = MagicMock()
+    mock_response2.choices[0].message.content = '{"message": "Second command", "command": "echo test"}'
+    mock_openai_client.chat.completions.create.return_value = mock_response2
+    process_mock2 = MagicMock()
+    process_mock2.communicate.return_value = ("Second output", "")
+    mock_popen.return_value = process_mock2
+    
+    chat_window_with_project.message_input.setText("Second command")
+    chat_window_with_project.send_message()
+    
+    # Verify separator between commands
+    cmd_content = chat_window_with_project.cmd_display.toPlainText()
+    assert "-" * 40 in cmd_content
+    assert cmd_content.count("-" * 40) == 2  # One after each command

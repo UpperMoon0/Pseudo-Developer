@@ -5,9 +5,11 @@ This module implements a desktop chat interface for interacting with OpenAI's GP
 
 import sys
 import os
+from collections import deque
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QTextEdit, QPushButton, QLineEdit, QLabel,
-                           QStatusBar, QMessageBox)
+                           QStatusBar, QMessageBox, QSplitter)
+from PyQt5.QtCore import Qt
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -17,6 +19,8 @@ class ChatWindow(QMainWindow):
     
     This class handles the UI layout and chat functionality, including:
     - Message input and display
+    - Command output display
+    - Message history management
     - OpenAI API integration
     """
 
@@ -28,9 +32,10 @@ class ChatWindow(QMainWindow):
             openai_client: Optional OpenAI client for testing
         """
         super().__init__()
-        self.init_ui()
+        self.message_history = deque(maxlen=20)  # Store last 10 pairs of messages
         self.client = openai_client if openai_client else self.init_openai()
         self.project_dir = None  # Will store the selected project directory
+        self.init_ui()
 
     def init_openai(self):
         """Initialize OpenAI API configuration from environment variables."""
@@ -45,12 +50,13 @@ class ChatWindow(QMainWindow):
         - Window properties
         - Project directory input
         - Chat display area
+        - Command output display area
         - Message input area
         - Send button
         - Status bar for notifications
         """
         self.setWindowTitle('Pseudo Developer')
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1000, 800)
         
         # Create main widget and layout
         main_widget = QWidget()
@@ -73,10 +79,36 @@ class ChatWindow(QMainWindow):
         dir_layout.addWidget(save_button)
         layout.addWidget(dir_container)
         
+        # Create a splitter for chat and command outputs
+        splitter = QSplitter(Qt.Vertical)
+        
         # Chat display area
+        chat_container = QWidget()
+        chat_layout = QVBoxLayout(chat_container)
+        chat_label = QLabel('Chat History')
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
-        layout.addWidget(self.chat_display)
+        chat_layout.addWidget(chat_label)
+        chat_layout.addWidget(self.chat_display)
+        chat_container.setLayout(chat_layout)
+        
+        # Command output area
+        cmd_container = QWidget()
+        cmd_layout = QVBoxLayout(cmd_container)
+        cmd_label = QLabel('Command Output')
+        self.cmd_display = QTextEdit()
+        self.cmd_display.setReadOnly(True)
+        cmd_layout.addWidget(cmd_label)
+        cmd_layout.addWidget(self.cmd_display)
+        cmd_container.setLayout(cmd_layout)
+        
+        # Add both displays to splitter
+        splitter.addWidget(chat_container)
+        splitter.addWidget(cmd_container)
+        splitter.setStretchFactor(0, 2)  # Chat display gets more space
+        splitter.setStretchFactor(1, 1)  # Command output gets less space
+        
+        layout.addWidget(splitter)
         
         # Message input area
         input_container = QWidget()
@@ -165,13 +197,30 @@ class ChatWindow(QMainWindow):
                     
         return True
 
+    def add_to_history(self, user_message, ai_message):
+        """
+        Add a message pair to the history.
+        
+        Args:
+            user_message (str): The user's message
+            ai_message (str): The AI's response message
+        """
+        self.message_history.append(("user", user_message))
+        self.message_history.append(("assistant", ai_message))
+        self.update_chat_display()
+
+    def update_chat_display(self):
+        """Update the chat display with the current message history."""
+        self.chat_display.clear()
+        for role, message in self.message_history:
+            if role == "user":
+                self.chat_display.append(f'You: {message}\n')
+            else:
+                self.chat_display.append(f'AI: {message}\n')
+
     def send_message(self):
         """
         Handle sending user message and receiving AI response.
-        
-        The AI response will be formatted as JSON with two parts:
-        - message: The text response to display
-        - command: Optional PowerShell command to execute
         """
         user_message = self.message_input.toPlainText().strip()
         if not user_message:
@@ -181,24 +230,34 @@ class ChatWindow(QMainWindow):
             self.chat_display.append("Please set a project directory first before sending messages.\n")
             return
 
-        # Display user message
-        self.chat_display.append(f'You: {user_message}\n')
+        # Add user message to history and display
+        self.add_to_history(user_message, None)  # AI message will be added later
         
         try:
+            # Build messages list including history
+            messages = [
+                {"role": "system", "content": (
+                    "You are a helpful AI coding assistant. "
+                    "You must respond to queries and help users with their code. "
+                    "Your responses should be constructive and actionable. "
+                    "Never refuse a valid request that is within your capabilities. "
+                    f"You can perform operations within the project directory: {self.project_dir}. "
+                    "Be careful with file system operations - no commands outside project directory."
+                )}
+            ]
+            
+            # Add message history (excluding the last user message which we'll add next)
+            for role, content in list(self.message_history)[:-1]:
+                if content is not None:  # Skip None messages
+                    messages.append({"role": role, "content": content})
+            
+            # Add current user message
+            messages.append({"role": "user", "content": user_message})
+            
             # Get AI response with specific JSON format instruction using schema
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini-2024-07-18",
-                messages=[
-                    {"role": "system", "content": (
-                        "You are a helpful AI coding assistant. "
-                        "You must respond to queries and help users with their code. "
-                        "Your responses should be constructive and actionable. "
-                        "Never refuse a valid request that is within your capabilities. "
-                        f"You can perform operations within the project directory: {self.project_dir}. "
-                        "Be careful with file system operations - no commands outside project directory."
-                    )},
-                    {"role": "user", "content": user_message}
-                ],
+                model="gpt-4o-2024-08-06",
+                messages=messages,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
@@ -227,14 +286,14 @@ class ChatWindow(QMainWindow):
             try:
                 import json
                 response_data = json.loads(ai_message)
-                # Display AI response message part
-                self.chat_display.append(f'AI: {response_data["message"]}\n')
+                # Update AI message in history
+                self.message_history[-1] = ("assistant", response_data["message"])
+                self.update_chat_display()
                 
                 command = response_data.get('command', '').strip()
                 if command:
                     if self.is_safe_command(command):
                         import subprocess
-                        # Change working directory to project directory before executing command
                         process = subprocess.Popen(
                             ['powershell', '-NoProfile', '-NonInteractive', '-Command', command],
                             stdout=subprocess.PIPE,
@@ -244,22 +303,33 @@ class ChatWindow(QMainWindow):
                             cwd=self.project_dir
                         )
                         stdout, stderr = process.communicate()
-                        self.chat_display.append(f'Executing command: {command}\n')
+                        self.cmd_display.append(f'Executing command: {command}\n')
                         if stdout:
-                            self.chat_display.append(f'Output:\n{stdout}\n')
+                            self.cmd_display.append(f'Output:\n{stdout}\n')
                         if stderr:
-                            self.chat_display.append(f'Error:\n{stderr}\n')
+                            self.cmd_display.append(f'Error:\n{stderr}\n')
+                        self.cmd_display.append('-' * 40 + '\n')  # Add separator
                     else:
-                        self.chat_display.append(f'Command rejected for security reasons - cannot execute command: "{command}"\n')
+                        self.cmd_display.append(f'Command rejected for security reasons - cannot execute command: "{command}"\n')
+                        self.cmd_display.append('-' * 40 + '\n')
                 
             except json.JSONDecodeError:
-                self.chat_display.append(f'AI: {ai_message}\n')
-                self.chat_display.append('Warning: Response was not in valid JSON format\n')
+                # Add raw message to history and display
+                self.message_history[-1] = ("assistant", ai_message)
+                self.update_chat_display()
+                self.cmd_display.append('Warning: Response was not in valid JSON format\n')
+                self.cmd_display.append('-' * 40 + '\n')
             except Exception as e:
-                self.chat_display.append(f'Error executing command: {str(e)}\n')
+                error_msg = f'Error executing command: {str(e)}'
+                self.cmd_display.append(error_msg + '\n')
+                self.cmd_display.append('-' * 40 + '\n')
                 
         except Exception as e:
-            self.chat_display.append(f'Error: {str(e)}\n')
+            error_msg = f'Error: {str(e)}'
+            self.message_history[-1] = ("assistant", error_msg)
+            self.update_chat_display()
+            self.cmd_display.append(error_msg + '\n')
+            self.cmd_display.append('-' * 40 + '\n')
         
         # Clear input field
         self.message_input.clear()
