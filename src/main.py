@@ -5,7 +5,9 @@ This module implements a desktop chat interface for interacting with OpenAI's GP
 
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                           QHBoxLayout, QTextEdit, QPushButton, QLineEdit, QLabel,
+                           QMessageBox)
 import openai
 from dotenv import load_dotenv
 
@@ -35,11 +37,12 @@ class ChatWindow(QMainWindow):
         
         Initializes:
         - Window properties
+        - Project directory input
         - Chat display area
         - Message input area
         - Send button
         """
-        self.setWindowTitle('Modern AI Chat')
+        self.setWindowTitle('Pseudo Developer')
         self.setMinimumSize(800, 600)
         
         # Create main widget and layout
@@ -47,12 +50,28 @@ class ChatWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         layout = QVBoxLayout(main_widget)
         
+        # Project directory input area
+        dir_container = QWidget()
+        dir_layout = QHBoxLayout(dir_container)
+        
+        dir_label = QLabel('Project Directory:')
+        self.dir_input = QLineEdit()
+        self.dir_input.setPlaceholderText('Enter project directory path...')
+        
+        save_button = QPushButton('Save')
+        save_button.clicked.connect(self.save_project_directory)
+        
+        dir_layout.addWidget(dir_label)
+        dir_layout.addWidget(self.dir_input)
+        dir_layout.addWidget(save_button)
+        layout.addWidget(dir_container)
+        
         # Chat display area
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
         layout.addWidget(self.chat_display)
         
-        # Input area
+        # Message input area
         input_container = QWidget()
         input_layout = QHBoxLayout(input_container)
         
@@ -66,6 +85,23 @@ class ChatWindow(QMainWindow):
         input_layout.addWidget(self.message_input)
         input_layout.addWidget(send_button)
         layout.addWidget(input_container)
+
+    def save_project_directory(self):
+        """
+        Save the project directory path and create the directory if it doesn't exist.
+        Shows a message box to indicate success or failure.
+        """
+        dir_path = self.dir_input.text().strip()
+        if not dir_path:
+            QMessageBox.warning(self, "Error", "Please enter a directory path")
+            return
+
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(dir_path, exist_ok=True)
+            QMessageBox.information(self, "Success", f"Directory saved: {dir_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create directory: {str(e)}")
 
     def send_message(self):
         """

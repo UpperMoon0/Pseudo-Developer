@@ -1,18 +1,7 @@
 """Tests for the chat application's core functionality."""
 import pytest
 from unittest.mock import MagicMock, patch
-from PyQt5.QtWidgets import QApplication
 from src.main import ChatWindow
-
-# Store QApplication reference to prevent garbage collection
-_qapp = None
-
-@pytest.fixture
-def app():
-    """Fixture to create QApplication instance."""
-    global _qapp
-    _qapp = QApplication([])
-    return _qapp
 
 @pytest.fixture
 def chat_window(app):
