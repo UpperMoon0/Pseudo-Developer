@@ -1,0 +1,31 @@
+/* Main Window */
+QMainWindow {
+    background-color: rgb(53, 53, 53);
+}
+
+/* Text areas */
+QTextEdit {
+    background-color: rgb(25, 25, 25);
+    color: rgb(255, 255, 255);
+    font-family: 'Segoe UI';
+    font-size: 10pt;
+    border: none;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: rgb(53, 53, 53);
+    color: rgb(255, 255, 255);
+    border: 1px solid rgb(42, 130, 218);
+    padding: 5px;
+}
+
+QPushButton:hover {
+    background-color: rgb(42, 130, 218);
+}
+
+/* Selection and highlight colors */
+QWidget {
+    selection-background-color: rgb(42, 130, 218);
+    selection-color: rgb(255, 255, 255);
+}
