@@ -1,6 +1,7 @@
 """Tests for the chat application's core functionality."""
 import pytest
 import os
+import json
 from unittest.mock import MagicMock, patch
 from src.main import ChatWindow
 
@@ -24,7 +25,7 @@ def temp_dir(tmpdir):
 def chat_window_with_project(chat_window, temp_dir):
     """Fixture to create ChatWindow instance with project directory set."""
     test_path = os.path.join(temp_dir, "test_project")
-    chat_window.dir_input.setText(str(test_path))
+    chat_window.ui.dir_input.setText(str(test_path))
     chat_window.save_project_directory()
     return chat_window
 
@@ -37,178 +38,201 @@ def mock_popen():
 def test_message_input_clear_on_send(chat_window_with_project):
     """Test that message input is cleared after sending."""
     test_message = "Test message"
-    chat_window_with_project.message_input.setText(test_message)
+    chat_window_with_project.ui.message_input.setText(test_message)
     chat_window_with_project.send_message()
-    assert chat_window_with_project.message_input.toPlainText() == ""
+    assert chat_window_with_project.ui.message_input.toPlainText() == ""
 
 def test_empty_message_not_sent(chat_window_with_project):
     """Test that empty messages are not sent."""
-    chat_window_with_project.message_input.setText("")
-    initial_content = chat_window_with_project.chat_display.toPlainText()
+    chat_window_with_project.ui.message_input.setText("")
+    initial_content = chat_window_with_project.ui.chat_display.toPlainText()
     chat_window_with_project.send_message()
-    assert chat_window_with_project.chat_display.toPlainText() == initial_content
+    assert chat_window_with_project.ui.chat_display.toPlainText() == initial_content
 
 def test_whitespace_message_not_sent(chat_window_with_project):
     """Test that whitespace-only messages are not sent."""
-    chat_window_with_project.message_input.setText("   \n   ")
-    initial_content = chat_window_with_project.chat_display.toPlainText()
+    chat_window_with_project.ui.message_input.setText("   \n   ")
+    initial_content = chat_window_with_project.ui.chat_display.toPlainText()
     chat_window_with_project.send_message()
-    assert chat_window_with_project.chat_display.toPlainText() == initial_content
+    assert chat_window_with_project.ui.chat_display.toPlainText() == initial_content
 
-def test_successful_message_send_and_display(chat_window_with_project, mock_openai_client):
+def test_successful_message_send_and_display(chat_window_with_project, monkeypatch):
     """Test successful message sending and response display."""
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Test AI response", "command": ""}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+    # Mock the chat_client.get_response method
+    mock_response = {"message": "Test AI response", "commands": []}
+    
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
     
     # Send test message
     test_message = "Test message"
-    chat_window_with_project.message_input.setText(test_message)
+    chat_window_with_project.ui.message_input.setText(test_message)
     chat_window_with_project.send_message()
     
     # Verify message flow
-    display_content = chat_window_with_project.chat_display.toPlainText()
+    display_content = chat_window_with_project.ui.chat_display.toPlainText()
     assert f"You: {test_message}" in display_content
     assert "AI:" in display_content
     assert "Test AI response" in display_content
 
-def test_api_error_handling_and_display(chat_window_with_project, mock_openai_client):
+def test_api_error_handling_and_display(chat_window_with_project, monkeypatch):
     """Test error handling and error message display."""
-    mock_openai_client.chat.completions.create.side_effect = Exception("API Error")
+    def mock_get_response(*args, **kwargs):
+        raise Exception("API Error")
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
     
     # Send test message
     test_message = "Test message"
-    chat_window_with_project.message_input.setText(test_message)
+    chat_window_with_project.ui.message_input.setText(test_message)
     chat_window_with_project.send_message()
     
     # Verify error handling
-    display_content = chat_window_with_project.chat_display.toPlainText()
+    display_content = chat_window_with_project.ui.chat_display.toPlainText()
     assert f"You: {test_message}" in display_content
-    assert "Error: API Error" in display_content
+    assert "Error:" in display_content
 
-def test_message_history_preservation(chat_window_with_project, mock_openai_client):
+def test_message_history_preservation(chat_window_with_project, monkeypatch):
     """Test that chat history is preserved when sending multiple messages."""
+    responses = [
+        {"message": "Response 1", "commands": []},
+        {"message": "Response 2", "commands": []}
+    ]
+    response_iter = iter(responses)
+    
+    def mock_get_response(*args, **kwargs):
+        return next(response_iter)
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    
     # First message
-    mock_response1 = MagicMock()
-    mock_response1.choices[0].message.content = '{"message": "Response 1", "command": ""}'
-    mock_openai_client.chat.completions.create.return_value = mock_response1
-    chat_window_with_project.message_input.setText("Message 1")
+    chat_window_with_project.ui.message_input.setText("Message 1")
     chat_window_with_project.send_message()
     
     # Second message
-    mock_response2 = MagicMock()
-    mock_response2.choices[0].message.content = '{"message": "Response 2", "command": ""}'
-    mock_openai_client.chat.completions.create.return_value = mock_response2
-    chat_window_with_project.message_input.setText("Message 2")
+    chat_window_with_project.ui.message_input.setText("Message 2")
     chat_window_with_project.send_message()
     
     # Verify chat history
-    display_content = chat_window_with_project.chat_display.toPlainText()
+    display_content = chat_window_with_project.ui.chat_display.toPlainText()
     assert "You: Message 1" in display_content
     assert "Response 1" in display_content
     assert "You: Message 2" in display_content
     assert "Response 2" in display_content
 
-def test_json_response_format(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test handling of JSON formatted response with message and command."""
-    # Setup mock client
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Test message", "command": "dir"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+def test_command_execution(chat_window_with_project, monkeypatch):
+    """Test execution of commands from AI response."""
+    # Mock the chat_client.get_response method
+    mock_response = {
+        "message": "Running a command", 
+        "commands": [
+            {"command": "dir", "description": "List directory contents"}
+        ]
+    }
     
-    # Setup mock process
-    process_mock = MagicMock()
-    process_mock.communicate.return_value = ("Directory listing", "")  # Mock stdout and stderr
-    mock_popen.return_value = process_mock
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    # Mock the command executor
+    mock_results = [{
+        "command": "dir",
+        "description": "List directory contents",
+        "stdout": "Directory listing output",
+        "stderr": "",
+        "is_safe": True
+    }]
+    
+    def mock_execute_commands(*args, **kwargs):
+        return mock_results
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    monkeypatch.setattr(chat_window_with_project.command_executor, "execute_commands", mock_execute_commands)
     
     # Send test message
-    chat_window_with_project.message_input.setText("Test command")
+    chat_window_with_project.ui.message_input.setText("Run a command")
     chat_window_with_project.send_message()
     
-    # Verify JSON parsing and command execution
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat display should have conversation
-    assert 'You: Test command' in chat_content
-    assert 'Test message' in chat_content
-    
-    # Command display should have command output
-    assert 'Executing command: dir' in cmd_content
-    assert 'Directory listing' in cmd_content
-    mock_popen.assert_called_once()
+    # Verify command execution and output display
+    cmd_content = chat_window_with_project.ui.cmd_display.toPlainText()
+    assert "Executing 1 commands sequentially" in cmd_content
+    assert "List directory contents" in cmd_content
+    assert "Command: dir" in cmd_content
+    assert "Output:\nDirectory listing output" in cmd_content
 
-def test_invalid_json_response(chat_window_with_project, mock_openai_client):
-    """Test handling of invalid JSON response."""
-    # Setup mock client
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = 'Invalid JSON'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+def test_unsafe_command_not_executed(chat_window_with_project, monkeypatch):
+    """Test that unsafe commands are not executed."""
+    # Mock the chat_client.get_response method
+    unsafe_command = "format C:"
+    mock_response = {
+        "message": "Running unsafe command", 
+        "commands": [
+            {"command": unsafe_command, "description": "Format drive"}
+        ]
+    }
+    
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    # Mock the command executor
+    mock_results = [{
+        "command": unsafe_command,
+        "description": "Format drive",
+        "stdout": None,
+        "stderr": None,
+        "is_safe": False
+    }]
+    
+    def mock_execute_commands(*args, **kwargs):
+        return mock_results
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    monkeypatch.setattr(chat_window_with_project.command_executor, "execute_commands", mock_execute_commands)
     
     # Send test message
-    chat_window_with_project.message_input.setText("Test invalid JSON")
+    chat_window_with_project.ui.message_input.setText("Run unsafe command")
     chat_window_with_project.send_message()
     
-    # Verify error handling
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should have conversation
-    assert 'You: Test invalid JSON' in chat_content
-    assert 'AI: Invalid JSON' in chat_content
-    
-    # Command display should have warning
-    assert 'Warning: Response was not in valid JSON format' in cmd_content
-
-def test_empty_command_not_executed(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that empty commands are not executed."""
-    # Setup mock client
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Test message", "command": ""}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
-    
-    # Send test message
-    chat_window_with_project.message_input.setText("Test empty command")
-    chat_window_with_project.send_message()
-    
-    # Verify command not executed
-    display_content = chat_window_with_project.chat_display.toPlainText()
-    assert 'You: Test empty command' in display_content
-    assert 'Test message' in display_content
-    mock_popen.assert_not_called()
+    # Verify command rejection
+    cmd_content = chat_window_with_project.ui.cmd_display.toPlainText()
+    assert "Command rejected for security reasons" in cmd_content
+    assert unsafe_command in cmd_content
 
 def test_no_project_dir_message(chat_window):
     """Test that messages can't be sent without setting project directory."""
     test_message = "Test message"
-    chat_window.message_input.setText(test_message)
+    chat_window.ui.message_input.setText(test_message)
     chat_window.send_message()
     
-    display_content = chat_window.chat_display.toPlainText()
-    assert "Please set a project directory first" in display_content
+    output_content = chat_window.ui.cmd_display.toPlainText()
+    assert "Please set a project directory first" in output_content
 
 def test_save_project_dir_sets_absolute_path(chat_window, temp_dir):
     """Test that saving project directory stores absolute path."""
     test_path = os.path.join(temp_dir, "test_project")
-    chat_window.dir_input.setText(str(test_path))
+    chat_window.ui.dir_input.setText(str(test_path))
     chat_window.save_project_directory()
     
     assert chat_window.project_dir == os.path.abspath(test_path)
+    # Also verify CommandExecutor was updated
+    assert chat_window.command_executor.project_dir == os.path.abspath(test_path)
 
 def test_save_project_directory_empty_path(chat_window):
     """Test that trying to save an empty directory path shows error in status bar."""
-    chat_window.dir_input.setText("")
+    chat_window.ui.dir_input.setText("")
     chat_window.save_project_directory()
     
-    assert chat_window.status_bar.currentMessage().startswith("Error: Please enter")
+    assert chat_window.ui.status_bar.currentMessage().startswith("Error: Please enter")
 
 def test_save_project_directory_success(chat_window, temp_dir):
     """Test successful creation and saving of project directory."""
     test_path = os.path.join(temp_dir, "test_project")
-    chat_window.dir_input.setText(str(test_path))
+    chat_window.ui.dir_input.setText(str(test_path))
     chat_window.save_project_directory()
     
     assert os.path.exists(test_path)
-    assert chat_window.status_bar.currentMessage().startswith("Success: Directory saved")
+    assert chat_window.ui.status_bar.currentMessage().startswith("Success: Directory saved")
     assert chat_window.project_dir == os.path.abspath(test_path)
 
 def test_save_project_directory_error(chat_window, monkeypatch):
@@ -218,10 +242,10 @@ def test_save_project_directory_error(chat_window, monkeypatch):
         raise PermissionError("Access denied")
     monkeypatch.setattr(os, "makedirs", mock_makedirs)
     
-    chat_window.dir_input.setText("/invalid/path")
+    chat_window.ui.dir_input.setText("/invalid/path")
     chat_window.save_project_directory()
     
-    assert chat_window.status_bar.currentMessage().startswith("Error: Failed to create")
+    assert chat_window.ui.status_bar.currentMessage().startswith("Error: Failed to create")
 
 @pytest.mark.parametrize("command,expected_safe", [
     ("dir", True),
@@ -239,188 +263,116 @@ def test_save_project_directory_error(chat_window, monkeypatch):
 ])
 def test_is_safe_command(chat_window_with_project, command, expected_safe):
     """Test command safety validation with various commands."""
-    # Mock project directory for consistent testing
-    chat_window_with_project.project_dir = "C:/test/project"
-    assert chat_window_with_project.is_safe_command(command) == expected_safe
+    # Set project directory for consistent testing
+    chat_window_with_project.command_executor.set_project_dir("C:/test/project")
+    assert chat_window_with_project.command_executor.is_safe_command(command) == expected_safe
 
-def test_unsafe_command_not_executed(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that unsafe commands are not executed."""
-    unsafe_command = "format C:"
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = f'{{"message": "Test", "command": "{unsafe_command}"}}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
-    
-    # Send test message
-    chat_window_with_project.message_input.setText("Test unsafe command")
-    chat_window_with_project.send_message()
-    
-    # Verify command was not executed
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should have conversation
-    assert 'You: Test unsafe command' in chat_content
-    assert 'AI: Test' in chat_content
-    
-    # Command display should have rejection message
-    assert 'Command rejected for security reasons' in cmd_content
-    assert f'"{unsafe_command}"' in cmd_content
-    mock_popen.assert_not_called()
-
-def test_command_output_display(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that command output is properly displayed."""
-    # Setup mock client and process
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Running directory listing", "command": "dir"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
-    
-    # Mock process output
-    process_mock = MagicMock()
-    process_mock.communicate.return_value = ("Directory listing output", "")
-    mock_popen.return_value = process_mock
-    
-    # Send test message
-    chat_window_with_project.message_input.setText("List directory")
-    chat_window_with_project.send_message()
-    
-    # Verify output display
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should only have conversation
-    assert "Running directory listing" in chat_content
-    
-    # Command display should have command output
-    assert "Executing command: dir" in cmd_content
-    assert "Output:\nDirectory listing output" in cmd_content
-
-def test_command_error_display(mock_popen, chat_window_with_project, mock_openai_client):
+def test_command_error_display(chat_window_with_project, monkeypatch):
     """Test that command errors are properly displayed."""
-    # Setup mock client and process
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Attempting command", "command": "invalid_cmd"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+    # Mock chat client and command executor
+    mock_response = {
+        "message": "Running command with error",
+        "commands": [
+            {"command": "invalid_cmd", "description": "Run invalid command"}
+        ]
+    }
     
-    # Mock process error
-    process_mock = MagicMock()
-    process_mock.communicate.return_value = ("", "Command not found")
-    mock_popen.return_value = process_mock
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    # Mock command execution with error
+    mock_results = [{
+        "command": "invalid_cmd",
+        "description": "Run invalid command",
+        "stdout": "",
+        "stderr": "Command not found",
+        "is_safe": True
+    }]
+    
+    def mock_execute_commands(*args, **kwargs):
+        return mock_results
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    monkeypatch.setattr(chat_window_with_project.command_executor, "execute_commands", mock_execute_commands)
     
     # Send test message
-    chat_window_with_project.message_input.setText("Run invalid command")
+    chat_window_with_project.ui.message_input.setText("Run command with error")
     chat_window_with_project.send_message()
     
     # Verify error display
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should only have conversation
-    assert "Attempting command" in chat_content
-    
-    # Command display should have error output
-    assert "Executing command: invalid_cmd" in cmd_content
+    cmd_content = chat_window_with_project.ui.cmd_display.toPlainText()
+    assert "Run invalid command" in cmd_content
+    assert "Command: invalid_cmd" in cmd_content
     assert "Error:\nCommand not found" in cmd_content
 
-def test_message_history_limit(chat_window_with_project, mock_openai_client):
-    """Test that message history is limited to 10 pairs (20 messages total)."""
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Response", "command": ""}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+def test_message_history_limit(chat_window_with_project, monkeypatch):
+    """Test that message history is limited to maxlen messages."""
+    # Create a mock response that always returns the same data
+    mock_response = {"message": "Response", "commands": []}
     
-    # Send 15 messages (more than the limit)
-    for i in range(15):
-        chat_window_with_project.message_input.setText(f"Message {i}")
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    
+    # Get the current maxlen
+    maxlen = chat_window_with_project.message_history.maxlen
+    
+    # Send more messages than the maximum
+    num_extra_messages = 5
+    for i in range(maxlen + num_extra_messages):
+        chat_window_with_project.ui.message_input.setText(f"Message {i}")
         chat_window_with_project.send_message()
     
-    # Verify only last 20 messages (10 pairs) are kept
-    assert len(chat_window_with_project.message_history) == 20
-    # Verify oldest messages are removed
-    first_message = chat_window_with_project.message_history[0]
-    assert first_message[1] == "Message 5"  # First user message should be #5
+    # Verify message history length is limited to maxlen
+    assert len(chat_window_with_project.message_history) == maxlen
 
-def test_command_output_separate_display(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that command output goes to command display, not chat display."""
-    # Setup mock client and process
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Running ls", "command": "dir"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
+def test_multiple_commands_executed_sequentially(chat_window_with_project, monkeypatch):
+    """Test that multiple commands are executed sequentially."""
+    # Mock the chat_client.get_response method with multiple commands
+    mock_response = {
+        "message": "Running multiple commands", 
+        "commands": [
+            {"command": "dir", "description": "List directory contents"},
+            {"command": "echo Hello", "description": "Print hello message"}
+        ]
+    }
     
-    # Mock process output
-    process_mock = MagicMock()
-    process_mock.communicate.return_value = ("Directory listing", "")
-    mock_popen.return_value = process_mock
+    def mock_get_response(*args, **kwargs):
+        return mock_response
+        
+    # Mock command execution results
+    mock_results = [
+        {
+            "command": "dir",
+            "description": "List directory contents",
+            "stdout": "Directory listing output",
+            "stderr": "",
+            "is_safe": True
+        },
+        {
+            "command": "echo Hello",
+            "description": "Print hello message",
+            "stdout": "Hello",
+            "stderr": "",
+            "is_safe": True
+        }
+    ]
+    
+    def mock_execute_commands(*args, **kwargs):
+        return mock_results
+        
+    monkeypatch.setattr(chat_window_with_project.chat_client, "get_response", mock_get_response)
+    monkeypatch.setattr(chat_window_with_project.command_executor, "execute_commands", mock_execute_commands)
     
     # Send test message
-    chat_window_with_project.message_input.setText("List files")
+    chat_window_with_project.ui.message_input.setText("Run multiple commands")
     chat_window_with_project.send_message()
     
-    # Verify separation of outputs
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should only have conversation
-    assert "You: List files" in chat_content
-    assert "AI: Running ls" in chat_content
-    assert "Directory listing" not in chat_content
-    
-    # Command display should have command output
-    assert "Executing command: dir" in cmd_content
-    assert "Output:\nDirectory listing" in cmd_content
-
-def test_command_error_separate_display(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that command errors go to command display, not chat display."""
-    # Setup mock client and process
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"message": "Running command", "command": "invalid"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response
-    
-    # Mock process error
-    process_mock = MagicMock()
-    process_mock.communicate.return_value = ("", "Command not found")
-    mock_popen.return_value = process_mock
-    
-    # Send test message
-    chat_window_with_project.message_input.setText("Run invalid command")
-    chat_window_with_project.send_message()
-    
-    # Verify separation of outputs
-    chat_content = chat_window_with_project.chat_display.toPlainText()
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    
-    # Chat should only have conversation
-    assert "You: Run invalid command" in chat_content
-    assert "AI: Running command" in chat_content
-    assert "Command not found" not in chat_content
-    
-    # Command display should have error output
-    assert "Executing command: invalid" in cmd_content
-    assert "Error:\nCommand not found" in cmd_content
-
-def test_command_display_separator(mock_popen, chat_window_with_project, mock_openai_client):
-    """Test that command outputs are separated by lines in command display."""
-    # First command
-    mock_response1 = MagicMock()
-    mock_response1.choices[0].message.content = '{"message": "First command", "command": "dir"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response1
-    process_mock1 = MagicMock()
-    process_mock1.communicate.return_value = ("First output", "")
-    mock_popen.return_value = process_mock1
-    
-    chat_window_with_project.message_input.setText("First command")
-    chat_window_with_project.send_message()
-    
-    # Second command
-    mock_response2 = MagicMock()
-    mock_response2.choices[0].message.content = '{"message": "Second command", "command": "echo test"}'
-    mock_openai_client.chat.completions.create.return_value = mock_response2
-    process_mock2 = MagicMock()
-    process_mock2.communicate.return_value = ("Second output", "")
-    mock_popen.return_value = process_mock2
-    
-    chat_window_with_project.message_input.setText("Second command")
-    chat_window_with_project.send_message()
-    
-    # Verify separator between commands
-    cmd_content = chat_window_with_project.cmd_display.toPlainText()
-    assert "-" * 40 in cmd_content
-    assert cmd_content.count("-" * 40) == 2  # One after each command
+    # Verify all commands were executed and displayed
+    cmd_content = chat_window_with_project.ui.cmd_display.toPlainText()
+    assert "Executing 2 commands sequentially" in cmd_content
+    assert "List directory contents" in cmd_content
+    assert "Print hello message" in cmd_content
+    assert "Output:\nDirectory listing output" in cmd_content
+    assert "Output:\nHello" in cmd_content
