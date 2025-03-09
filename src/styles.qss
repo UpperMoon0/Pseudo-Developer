@@ -29,3 +29,13 @@ QWidget {
     selection-background-color: rgb(42, 130, 218);
     selection-color: rgb(255, 255, 255);
 }
+
+/* Labels */
+QLabel {
+    color: rgb(255, 255, 255);
+}
+
+/* Status Bar */
+QStatusBar {
+    color: rgb(255, 255, 255);
+}
