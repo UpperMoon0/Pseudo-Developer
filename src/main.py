@@ -9,9 +9,43 @@ import sys
 import os
 from collections import deque
 from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtCore import QThread, pyqtSignal
 from src.ui import ChatWindowUI
 from src.command_executor import CommandExecutor
 from src.chat_client import ChatClient
+
+class ChatWorker(QThread):
+    """
+    Worker thread for handling chat operations without blocking the UI.
+    """
+    finished = pyqtSignal(dict, list)  # Signal emitted when processing is done
+    error = pyqtSignal(str)  # Signal emitted when an error occurs
+    
+    def __init__(self, chat_client, command_executor, messages, project_dir):
+        """Initialize the worker with required components and data."""
+        super().__init__()
+        self.chat_client = chat_client
+        self.command_executor = command_executor
+        self.messages = messages
+        self.project_dir = project_dir
+        
+    def run(self):
+        """Execute chat operations in background thread."""
+        try:
+            # Get response from chat client
+            response_data = self.chat_client.get_response(self.messages, self.project_dir)
+            
+            # Execute commands if any
+            results = []
+            commands = response_data.get('commands', [])
+            if commands:
+                results = self.command_executor.execute_commands(commands)
+            
+            # Emit results
+            self.finished.emit(response_data, results)
+            
+        except Exception as e:
+            self.error.emit(str(e))
 
 class ChatWindow(QMainWindow):
     """
@@ -36,6 +70,9 @@ class ChatWindow(QMainWindow):
         self.ui = ChatWindowUI(self)
         self.command_executor = CommandExecutor()
         self.chat_client = ChatClient(api_key=openai_client.api_key if openai_client else None)
+        
+        # Worker thread
+        self.worker = None
 
     def save_project_directory(self):
         """
@@ -104,6 +141,7 @@ class ChatWindow(QMainWindow):
     def send_message(self):
         """
         Handle sending user message and receiving AI response.
+        Uses a background thread to prevent UI freezing.
         """
         user_message = self.ui.get_message_input()
         if not user_message:
@@ -116,44 +154,45 @@ class ChatWindow(QMainWindow):
         # Add user message to history and display
         self.add_to_history(user_message, None)  # AI message will be added later
         
-        try:
-            # Build messages list from history (excluding the last user message which we just added)
-            messages = []
-            for role, content in list(self.message_history)[:-1]:
-                if content is not None:  # Skip None messages
-                    messages.append({"role": role, "content": content})
-            
-            # Add current user message
-            messages.append({"role": "user", "content": user_message})
-            
-            # Get response from chat client
-            response_data = self.chat_client.get_response(messages, self.project_dir)
-            
-            # Update AI message in history
-            self.message_history[-1] = ("assistant", response_data["message"])
-            self.ui.update_chat_display(self.message_history)
-            
-            # Process commands
-            commands = response_data.get('commands', [])
-            if commands:
-                self.ui.append_command_output(f'Executing {len(commands)} commands sequentially:\n')
-                
-                # Execute commands and process results
-                results = self.command_executor.execute_commands(commands)
-                self.process_command_results(results)
-            else:
-                self.ui.append_command_output('No commands to execute\n')
-                self.ui.append_command_output('-' * 40 + '\n')
-                
-        except Exception as e:
-            error_msg = f'Error: {str(e)}'
-            self.message_history[-1] = ("assistant", error_msg)
-            self.ui.update_chat_display(self.message_history)
-            self.ui.append_command_output(error_msg + '\n')
-            self.ui.append_command_output('-' * 40 + '\n')
+        # Build messages list from history
+        messages = []
+        for role, content in list(self.message_history)[:-1]:
+            if content is not None:  # Skip None messages
+                messages.append({"role": role, "content": content})
+        
+        # Add current user message
+        messages.append({"role": "user", "content": user_message})
+        
+        # Create and start worker thread
+        self.worker = ChatWorker(self.chat_client, self.command_executor, messages, self.project_dir)
+        self.worker.finished.connect(self.handle_worker_finished)
+        self.worker.error.connect(self.handle_worker_error)
+        self.worker.start()
         
         # Clear input field
         self.ui.clear_message_input()
+    
+    def handle_worker_finished(self, response_data, results):
+        """Handle successful completion of background processing."""
+        # Update AI message in history
+        self.message_history[-1] = ("assistant", response_data["message"])
+        self.ui.update_chat_display(self.message_history)
+        
+        # Display command results if any
+        if results:
+            self.ui.append_command_output(f'Executing {len(results)} commands sequentially:\n')
+            self.process_command_results(results)
+        else:
+            self.ui.append_command_output('No commands to execute\n')
+            self.ui.append_command_output('-' * 40 + '\n')
+    
+    def handle_worker_error(self, error_message):
+        """Handle errors from background processing."""
+        error_msg = f'Error: {error_message}'
+        self.message_history[-1] = ("assistant", error_msg)
+        self.ui.update_chat_display(self.message_history)
+        self.ui.append_command_output(error_msg + '\n')
+        self.ui.append_command_output('-' * 40 + '\n')
 
 def main():
     """Initialize and run the chat application."""
