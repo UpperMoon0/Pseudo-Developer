@@ -709,3 +709,37 @@ if __name__ == '__main__':
         assert 'def calculate_primes(n):' in content
         assert 'print(\'First 20 primes:\'' in content
         assert content.count('\n') >= 8  # Check that line breaks are preserved
+
+def test_file_write_with_literal_newlines(chat_window_with_project, temp_dir):
+    """Test writing Python code with literal \n being properly converted to actual newlines."""
+    test_file = os.path.join(temp_dir, "test_project", "newline_test.py")
+    
+    # Python code with literal \n that should be converted to actual newlines
+    python_code = '''import sys\\nfrom PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout\\n\\napp = QApplication(sys.argv)\\nwindow = QWidget()\\nwindow.setWindowTitle('PyQt5 App')\\nlayout = QVBoxLayout()\\nlabel = QLabel('Hello, PyQt5!')\\nlayout.addWidget(label)\\nwindow.setLayout(layout)\\nwindow.show()\\nsys.exit(app.exec_())'''
+    
+    command = f'Set-Content -Path {test_file} -Value "{python_code}"'
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents has proper newlines and no literal \n
+    with open(test_file, 'r') as f:
+        content = f.read()
+        expected = '''import sys
+from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout
+
+app = QApplication(sys.argv)
+window = QWidget()
+window.setWindowTitle('PyQt5 App')
+layout = QVBoxLayout()
+label = QLabel('Hello, PyQt5!')
+layout.addWidget(label)
+window.setLayout(layout)
+window.show()
+sys.exit(app.exec_())'''
+        assert content == expected

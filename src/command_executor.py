@@ -25,6 +25,27 @@ class CommandExecutor:
             project_dir (str): The project directory to execute commands within
         """
         self.project_dir = project_dir
+        self.powershell_process = None
+        
+    def __del__(self):
+        """Clean up PowerShell process on deletion."""
+        if self.powershell_process:
+            self.powershell_process.terminate()
+            self.powershell_process = None
+    
+    def _ensure_powershell_session(self):
+        """Ensure a persistent PowerShell session exists."""
+        if not self.powershell_process or self.powershell_process.poll() is not None:
+            # Start a new PowerShell session
+            self.powershell_process = subprocess.Popen(
+                ['powershell', '-NoProfile', '-NonInteractive'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=True,
+                cwd=self.project_dir
+            )
     
     def set_project_dir(self, directory):
         """
@@ -34,6 +55,10 @@ class CommandExecutor:
             directory (str): The directory path to set
         """
         self.project_dir = directory
+        # Only start PowerShell session when actually executing commands
+        if self.powershell_process:
+            self.powershell_process.terminate()
+            self.powershell_process = None
 
     def is_path_in_project(self, path):
         """
@@ -79,7 +104,7 @@ class CommandExecutor:
     def is_safe_command(self, command):
         """
         Check if a command is safe to execute by verifying it only accesses the project directory.
-        Only blocks the 'format' command and ensures all operations stay within project directory.
+        Allows common Windows commands while ensuring they only operate within project directory.
         
         Args:
             command (str): The command to check
@@ -90,17 +115,51 @@ class CommandExecutor:
         if not self.project_dir:
             return False
             
-        # Block the format command as it's too dangerous
+        # Split command and normalize to lowercase for consistent checking
         cmd_parts = command.lower().split()
         if not cmd_parts:
             return False
-            
-        if 'format' in cmd_parts[0]:
+        
+        # Block dangerous system-wide commands
+        dangerous_commands = ['format']
+        if cmd_parts[0] in dangerous_commands:
             return False
             
         # Check if the command tries to navigate outside project directory using .. or ~
         if '..' in command or '~' in command:
             return False
+            
+        # List of safe Windows commands that only need path validation
+        safe_commands = {
+            'dir': 1,      # dir [path]
+            'type': 1,     # type [file]
+            'move': 2,     # move [source] [dest]
+            'ren': 2,      # ren [oldname] [newname]
+            'rename': 2,   # rename [oldname] [newname]
+            'del': 1,      # del [file]
+            'rm': 1,       # rm [file]
+            'rmdir': 1,    # rmdir [directory]
+            'rd': 1        # rd [directory]
+        }
+        
+        # If it's a known safe command, verify its paths
+        if cmd_parts[0] in safe_commands:
+            expected_args = safe_commands[cmd_parts[0]]
+            # For commands with no args (like plain 'dir'), always allow within project dir
+            if len(cmd_parts) == 1 and cmd_parts[0] == 'dir':
+                return True
+                
+            # Check if we have the right number of arguments
+            if len(cmd_parts) < expected_args + 1:
+                return False
+            
+            # Verify all path arguments are within project directory
+            for i in range(1, expected_args + 1):
+                if i < len(cmd_parts):
+                    path = cmd_parts[i].strip('"\'')
+                    if not self.is_path_in_project(path):
+                        return False
+            return True
             
         # For PowerShell commands like Add-Content and Set-Content, check the -Path parameter
         if cmd_parts[0] in ['add-content', 'set-content', 'new-item']:
@@ -375,18 +434,65 @@ class CommandExecutor:
                         error if not success else None,
                         success)
 
-        # Execute other commands normally
-        process = subprocess.Popen(
-            ['powershell', '-NoProfile', '-NonInteractive', '-Command', command],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            shell=True,
-            cwd=self.project_dir
-        )
-        stdout, stderr = process.communicate()
-        return stdout, stderr, True
+        # Execute command in persistent PowerShell session
+        self._ensure_powershell_session()
         
+        # Add command terminator and output markers for reliable output capture
+        marked_command = f"""
+echo "===OUTPUT_START===";
+{command};
+$LASTEXITCODE;
+echo "===OUTPUT_END===";
+echo "===ERROR_START===";
+$Error[0];
+echo "===ERROR_END===";
+$Error.Clear();
+"""
+        
+        self.powershell_process.stdin.write(marked_command + '\n')
+        self.powershell_process.stdin.flush()
+        
+        # Read output until we see our markers
+        output = []
+        error = []
+        in_output = False
+        in_error = False
+        
+        while True:
+            line = self.powershell_process.stdout.readline().rstrip()
+            if not line:
+                continue
+                
+            if line == "===OUTPUT_START===":
+                in_output = True
+                continue
+            elif line == "===OUTPUT_END===":
+                in_output = False
+                continue
+            elif line == "===ERROR_START===":
+                in_error = True
+                continue
+            elif line == "===ERROR_END===":
+                in_error = False
+                break
+                
+            if in_output:
+                output.append(line)
+            elif in_error and line != "":
+                error.append(line)
+        
+        stdout = '\n'.join(output[:-1])  # Exclude the exit code
+        stderr = '\n'.join(error)
+        
+        # Check if command was successful (last line of output is exit code)
+        try:
+            exit_code = int(output[-1])
+            is_success = exit_code == 0
+        except (IndexError, ValueError):
+            is_success = not stderr
+        
+        return stdout, stderr, True
+
     def handle_content_command(self, command):
         """
         Handle Set-Content and Add-Content commands by extracting path and content.
@@ -427,14 +533,21 @@ class CommandExecutor:
                 if triple_start < triple_end:
                     content = value[triple_start:triple_end]
             elif value.startswith('"') and value.endswith('"'):
-                # Double quotes
+                # Double quotes - handle escaped characters
                 content = value[1:-1]
+                # Convert literal \n to actual newlines
+                content = content.encode('utf-8').decode('unicode_escape')
             elif value.startswith("'") and value.endswith("'"):
                 # Single quotes
                 content = value[1:-1]
+                # Convert literal \n to actual newlines
+                content = content.encode('utf-8').decode('unicode_escape')
             else:
                 # Plain text
                 content = value
+                # Convert literal \n to actual newlines if they exist
+                if '\\n' in content:
+                    content = content.encode('utf-8').decode('unicode_escape')
             
             # For Python files - handle indentation and do special processing
             if filepath.lower().endswith('.py'):
