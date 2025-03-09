@@ -9,7 +9,7 @@ import sys
 import os
 from collections import deque
 from PyQt5.QtWidgets import QApplication, QMainWindow
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal, QEventLoop, QTimer
 from src.ui import ChatWindowUI
 from src.command_executor import CommandExecutor
 from src.chat_client import ChatClient
@@ -138,6 +138,25 @@ class ChatWindow(QMainWindow):
             # Add separator
             self.ui.append_command_output('-' * 40 + '\n')
     
+    def _wait_for_worker(self, timeout=5000):
+        """
+        Wait for worker thread to complete. Used in testing.
+        
+        Args:
+            timeout (int): Maximum time to wait in milliseconds
+        """
+        if not self.worker:
+            return
+            
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        self.worker.finished.connect(loop.quit)
+        self.worker.error.connect(loop.quit)
+        timer.start(timeout)
+        loop.exec_()
+    
     def send_message(self):
         """
         Handle sending user message and receiving AI response.
@@ -171,6 +190,10 @@ class ChatWindow(QMainWindow):
         
         # Clear input field
         self.ui.clear_message_input()
+        
+        # If running in test environment, wait for worker
+        if hasattr(self, '_in_test') and self._in_test:
+            self._wait_for_worker()
     
     def handle_worker_finished(self, response_data, results):
         """Handle successful completion of background processing."""

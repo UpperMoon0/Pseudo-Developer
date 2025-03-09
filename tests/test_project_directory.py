@@ -8,7 +8,9 @@ from src.main import ChatWindow
 @pytest.fixture
 def chat_window(app):
     """Fixture to create ChatWindow instance."""
-    return ChatWindow()
+    window = ChatWindow()
+    window._in_test = True
+    return window
 
 @pytest.fixture
 def temp_dir(tmp_path):

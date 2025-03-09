@@ -14,7 +14,9 @@ def mock_openai_client():
 @pytest.fixture
 def chat_window(app, mock_openai_client):
     """Fixture to create ChatWindow instance with mocked OpenAI client."""
-    return ChatWindow(openai_client=mock_openai_client)
+    window = ChatWindow(openai_client=mock_openai_client)
+    window._in_test = True
+    return window
 
 @pytest.fixture
 def temp_dir(tmpdir):
@@ -376,3 +378,334 @@ def test_multiple_commands_executed_sequentially(chat_window_with_project, monke
     assert "Print hello message" in cmd_content
     assert "Output:\nDirectory listing output" in cmd_content
     assert "Output:\nHello" in cmd_content
+
+def test_file_write_operation(chat_window_with_project, temp_dir):
+    """Test writing content to a file using echo command."""
+    test_file = os.path.join(temp_dir, "test_project", "test.txt")
+    test_content = "Hello, World!"
+    command = f'echo {test_content} > {test_file}'
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read()
+        assert content.strip() == test_content
+
+def test_large_file_write_operation(chat_window_with_project, temp_dir):
+    """Test writing large content to a file in chunks."""
+    test_file = os.path.join(temp_dir, "test_project", "large.txt")
+    # Create content larger than chunk size (8KB)
+    test_content = "Large content! " * 1000  # Much larger than CHUNK_SIZE
+    
+    success, error = chat_window_with_project.command_executor.safe_write_file(test_file, test_content)
+    
+    # Verify write operation
+    assert success is True
+    assert error is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read()
+        assert content == test_content
+
+def test_file_read_operation(chat_window_with_project, temp_dir):
+    """Test reading content from a file."""
+    test_file = os.path.join(temp_dir, "test_project", "read_test.txt")
+    test_content = "Test content for reading"
+    
+    # Create test file
+    with open(test_file, 'w') as f:
+        f.write(test_content)
+    
+    # Read file using safe_read_file
+    content, error = chat_window_with_project.command_executor.safe_read_file(test_file)
+    
+    # Verify read operation
+    assert error is None
+    assert content == test_content
+
+def test_file_copy_operation(chat_window_with_project, temp_dir):
+    """Test copying a file within project directory."""
+    src_file = os.path.join(temp_dir, "test_project", "source.txt")
+    dst_file = os.path.join(temp_dir, "test_project", "destination.txt")
+    test_content = "Content to be copied"
+    
+    # Create source file
+    with open(src_file, 'w') as f:
+        f.write(test_content)
+    
+    # Copy file using safe_copy_file
+    success, error = chat_window_with_project.command_executor.safe_copy_file(src_file, dst_file)
+    
+    # Verify copy operation
+    assert success is True
+    assert error is None
+    assert os.path.exists(dst_file)
+    
+    # Verify file contents
+    with open(dst_file, 'r') as f:
+        content = f.read()
+        assert content == test_content
+
+def test_file_operations_outside_project(chat_window_with_project, temp_dir):
+    """Test that file operations outside project directory are blocked."""
+    outside_file = os.path.join(temp_dir, "outside.txt")
+    test_content = "This should not be written"
+    
+    # Test write operation
+    success, error = chat_window_with_project.command_executor.safe_write_file(outside_file, test_content)
+    assert success is False
+    assert "outside project directory" in error
+    assert not os.path.exists(outside_file)
+    
+    # Test read operation
+    content, error = chat_window_with_project.command_executor.safe_read_file(outside_file)
+    assert content is None
+    assert "outside project directory" in error
+    
+    # Test copy operation (both source and destination outside)
+    dst_file = os.path.join(temp_dir, "outside_copy.txt")
+    success, error = chat_window_with_project.command_executor.safe_copy_file(outside_file, dst_file)
+    assert success is False
+    assert "outside project directory" in error
+
+def test_directory_creation(chat_window_with_project, temp_dir):
+    """Test creating nested directories within project directory."""
+    test_dir = os.path.join(temp_dir, "test_project", "nested", "subdirectory")
+    test_file = os.path.join(test_dir, "test.txt")
+    test_content = "Test content in nested directory"
+    
+    # Write file to nested directory (should create directories)
+    success, error = chat_window_with_project.command_executor.safe_write_file(test_file, test_content)
+    
+    # Verify directory creation and file write
+    assert success is True
+    assert error is None
+    assert os.path.exists(test_dir)
+    assert os.path.exists(test_file)
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read()
+        assert content == test_content
+
+def test_unicode_content_handling(chat_window_with_project, temp_dir):
+    """Test handling of unicode content in file operations."""
+    test_file = os.path.join(temp_dir, "test_project", "unicode.txt")
+    test_content = "Hello, 世界! 👋 🌍"  # Unicode text with emojis
+    
+    # Write unicode content
+    success, error = chat_window_with_project.command_executor.safe_write_file(test_file, test_content)
+    assert success is True
+    assert error is None
+    
+    # Read back and verify content
+    content, error = chat_window_with_project.command_executor.safe_read_file(test_file)
+    assert error is None
+    assert content == test_content
+
+def test_path_security(chat_window_with_project, temp_dir):
+    """Test path security checks for various path formats."""
+    test_paths = [
+        ("../outside.txt", False),  # Parent directory
+        ("./inside.txt", True),     # Current directory
+        ("~/file.txt", False),      # Home directory
+        ("normal.txt", True),       # Simple filename
+        ("subfolder/file.txt", True), # Nested path
+        ("C:/absolute/path.txt", False), # Absolute path
+        ("\x00malicious.txt", False),  # Null byte injection
+    ]
+    
+    for path, expected_safe in test_paths:
+        full_path = os.path.join(temp_dir, "test_project", path)
+        assert chat_window_with_project.command_executor.is_path_in_project(path) == expected_safe
+
+def test_file_write_with_quotes(chat_window_with_project, temp_dir):
+    """Test writing content to a file with quotes in the content."""
+    test_file = os.path.join(temp_dir, "test_project", "quoted.txt")
+    test_cases = [
+        ('echo "Hello World" > ' + test_file, "Hello World"),
+        ("echo 'print(\"Hello\")' > " + test_file, 'print("Hello")'),
+        ('echo "value = \'test\'" > ' + test_file, "value = 'test'")
+    ]
+    
+    for command, expected in test_cases:
+        # Execute command
+        stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+        
+        # Verify command execution
+        assert is_safe is True
+        assert stdout == "File written successfully"
+        assert stderr is None
+        
+        # Verify file contents
+        with open(test_file, 'r') as f:
+            content = f.read()
+            assert content.strip() == expected
+
+def test_file_write_with_here_string(chat_window_with_project, temp_dir):
+    """Test writing multi-line content using PowerShell here-string syntax."""
+    test_file = os.path.join(temp_dir, "test_project", "multiline.py")
+    command = """$code = @'
+def hello():
+    print("Hello, World!")
+    return 42
+
+if __name__ == "__main__":
+    result = hello()
+    print(f"Result: {result}")
+'@ > """ + test_file
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read()
+        expected = '''def hello():
+    print("Hello, World!")
+    return 42
+
+if __name__ == "__main__":
+    result = hello()
+    print(f"Result: {result}")'''
+        assert content.strip() == expected.strip()
+
+def test_file_write_with_set_content(chat_window_with_project, temp_dir):
+    """Test writing multi-line content using PowerShell Set-Content command."""
+    test_file = os.path.join(temp_dir, "test_project", "set_content_test.py")
+    content = '''"""
+def hello():
+    print("Hello, World!")
+    return 42
+
+if __name__ == "__main__":
+    result = hello()
+    print(f"Result: {result}")
+"""'''
+    command = f'Set-Content -Path {test_file} -Value {content}'
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        written_content = f.read()
+        expected = '''def hello():
+    print("Hello, World!")
+    return 42
+
+if __name__ == "__main__":
+    result = hello()
+    print(f"Result: {result}")'''
+        assert written_content.strip() == expected.strip()
+
+def test_file_write_with_set_content_python_script(chat_window_with_project, temp_dir):
+    """Test writing Python script with Set-Content, verifying quote and newline handling."""
+    test_file = os.path.join(temp_dir, "test_project", "test_script.py")
+    # Use raw string to handle backslashes and escaping properly
+    command = r'''Set-Content -Path {} -Value @"
+# Sample Python script
+def calculate_sum(numbers):
+    """Returns the sum of a list of numbers."""
+    return sum(numbers)
+
+def main():
+    numbers = [1, 2, 3, 4, 5]
+    result = calculate_sum(numbers)
+    print(f"The sum is: {{result}}")
+
+if __name__ == '__main__':
+    main()
+"@'''.format(test_file)
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents and proper handling of quotes and docstrings
+    with open(test_file, 'r') as f:
+        content = f.read()
+        assert '"""Returns the sum of a list of numbers."""' in content
+        assert "if __name__ == '__main__':" in content
+        assert 'print(f"The sum is: {result}")' in content
+
+def test_file_write_with_set_content_single_line(chat_window_with_project, temp_dir):
+    """Test writing content using PowerShell Set-Content command with single line format."""
+    test_file = os.path.join(temp_dir, "test_project", "single_line.py")
+    
+    # Single line format that should work more reliably
+    command = f'Set-Content -Path {test_file} -Value "print(\'Hello from single line\')"'
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read()
+        assert content.strip() == "print('Hello from single line')"
+
+def test_file_write_with_add_content(chat_window_with_project, temp_dir):
+    """Test writing multi-line content using PowerShell Add-Content command."""
+    test_file = os.path.join(temp_dir, "test_project", "add_content_test.py")
+    
+    # First create empty file
+    command_create = f'New-Item -Path {test_file} -ItemType File'
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command_create)
+    assert is_safe is True
+    
+    # Then add content
+    command_add = f'''Add-Content -Path {test_file} -Value @"
+def calculate_primes(n):
+    primes = []
+    num = 2
+    while len(primes) < n:
+        if all(num % p != 0 for p in primes):
+            primes.append(num)
+        num += 1
+    return primes
+
+if __name__ == '__main__':
+    print('First 20 primes:', calculate_primes(20))
+"@'''
+    
+    # Execute command
+    stdout, stderr, is_safe = chat_window_with_project.command_executor.execute_command(command_add)
+    
+    # Verify command execution
+    assert is_safe is True
+    assert stdout == "File written successfully"
+    assert stderr is None
+    
+    # Verify file contents
+    with open(test_file, 'r') as f:
+        content = f.read().strip()
+        assert 'def calculate_primes(n):' in content
+        assert 'print(\'First 20 primes:\'' in content
+        assert content.count('\n') >= 8  # Check that line breaks are preserved
