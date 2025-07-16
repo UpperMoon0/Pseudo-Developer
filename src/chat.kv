@@ -1,0 +1,68 @@
+#:kivy 2.0.0
+
+<ChatLayout>:
+    orientation: 'vertical'
+    spacing: 10
+    padding: 10
+    canvas.before:
+        Color:
+            rgba: 0.2, 0.2, 0.2, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        size_hint_y: None
+        height: 40
+        spacing: 10
+
+        TextInput:
+            id: project_dir_input
+            hint_text: 'Enter Project Directory'
+            size_hint_y: None
+            height: 40
+            background_color: (0.1, 0.1, 0.1, 1)
+            foreground_color: (1, 1, 1, 1)
+            cursor_color: (1, 1, 1, 1)
+            font_name: 'Roboto'
+
+        Button:
+            id: save_dir_button
+            text: 'Save Directory'
+            size_hint_y: None
+            height: 40
+            background_color: (0.1, 0.5, 0.8, 1)
+            font_name: 'Roboto'
+
+    ScrollView:
+        size_hint: (1, 1)
+        Label:
+            id: chat_history
+            size_hint_y: None
+            markup: True
+            text_size: self.width, None
+            height: self.texture_size[1]
+            font_name: 'Roboto'
+
+    BoxLayout:
+        size_hint_y: None
+        height: 40
+        spacing: 10
+
+        TextInput:
+            id: message_input
+            hint_text: 'Enter message'
+            size_hint_y: None
+            height: 40
+            background_color: (0.1, 0.1, 0.1, 1)
+            foreground_color: (1, 1, 1, 1)
+            cursor_color: (1, 1, 1, 1)
+            font_name: 'Roboto'
+
+        Button:
+            id: send_button
+            text: 'Send'
+            size_hint_y: None
+            height: 40
+            background_color: (0.1, 0.5, 0.8, 1)
+            font_name: 'Roboto'

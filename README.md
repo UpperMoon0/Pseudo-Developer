@@ -4,7 +4,7 @@ A Python-based developer assistant application that provides an interactive chat
 
 ## Features
 
-- Interactive chat interface with AI assistance using OpenAI's API
+- Interactive chat interface with AI assistance using Google's Gemini API
 - Secure command execution within project directories
 - Real-time command output display
 - Project directory management
@@ -21,7 +21,7 @@ A Python-based developer assistant application that provides an interactive chat
   - pytest>=7.4.0
   - pytest-cov>=4.1.0
   - PyQt5>=5.15.9
-  - openai>=1.3.5
+  - google-generativeai
   - python-dotenv>=1.0.0
 
 ## Installation
@@ -43,9 +43,9 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Create a .env file with your OpenAI API key:
+4. Create a .env file with your Gemini API key:
 ```
-OPENAI_API_KEY=your_api_key_here
+GEMINI_API_KEY=your_api_key_here
 ```
 
 ## Usage
