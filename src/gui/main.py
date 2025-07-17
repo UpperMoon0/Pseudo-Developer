@@ -13,24 +13,24 @@ from src.tool_executor import ToolExecutor
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class ChatLayout(BoxLayout):
+class PseudoDeveloperLayout(BoxLayout):
     pass
 
-class ChatApp(App):
+class PseudoDeveloperApp(App):
     selected_api_key = StringProperty(None, allownone=True)
 
     def build(self):
-        logging.info("Building ChatApp GUI.")
+        logging.info("Building PseudoDeveloperApp GUI.")
         self.message_history = deque(maxlen=20)
         self.project_dir = None
         self.chat_client = ChatClient()
         self.command_executor = ToolExecutor()
         self.settings_path = self._get_settings_path()
         
-        return ChatLayout()
+        return PseudoDeveloperLayout()
 
     def on_start(self):
-        logging.info("ChatApp GUI build complete.")
+        logging.info("PseudoDeveloperApp GUI build complete.")
         self.load_api_keys_to_gui()
         self.load_settings()
 
@@ -198,4 +198,4 @@ class ChatApp(App):
         self.root.ids.chat_history.text = chat_text
 
 if __name__ == '__main__':
-    ChatApp().run()
+    PseudoDeveloperApp().run()

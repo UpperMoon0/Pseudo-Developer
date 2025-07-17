@@ -1,4 +1,4 @@
-from src.gui.main import ChatApp
+from src.gui.main import PseudoDeveloperApp
 
 if __name__ == "__main__":
-    ChatApp().run()
+    PseudoDeveloperApp().run()
