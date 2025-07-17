@@ -1,10 +1,13 @@
 import os
+import logging
 from collections import deque
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.properties import StringProperty
 from kivy.clock import Clock
 from src.chat_client import ChatClient
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ChatLayout(BoxLayout):
     pass
@@ -13,6 +16,7 @@ class ChatApp(App):
     selected_api_key = StringProperty(None, allownone=True)
 
     def build(self):
+        logging.info("Building ChatApp GUI.")
         self.message_history = deque(maxlen=20)
         self.project_dir = None
         self.chat_client = ChatClient()
@@ -22,27 +26,42 @@ class ChatApp(App):
         return layout
 
     def after_build(self, dt):
+        logging.info("ChatApp GUI build complete.")
         self.load_api_keys_to_gui()
 
     def load_api_keys_to_gui(self):
+        logging.info("Loading API keys to GUI.")
         keys = self.chat_client.get_api_keys()
+        logging.debug(f"Found API keys: {keys}")
         self.root.ids.api_key_list.data = [{'text': key} for key in keys]
+        logging.info("Finished loading API keys to GUI.")
 
     def add_api_key(self):
         new_key = self.root.ids.new_api_key_input.text
+        logging.debug(f"Attempting to add new API key: {'*' * len(new_key) if new_key else 'empty'}")
         if new_key:
             self.chat_client.add_api_key(new_key)
             self.load_api_keys_to_gui()
             self.root.ids.new_api_key_input.text = ""
+            logging.info("Successfully added new API key.")
+        else:
+            logging.warning("Add API key called with no key.")
 
     def remove_api_key(self):
+        logging.debug(f"Attempting to remove API key: {self.selected_api_key}")
         if self.selected_api_key:
             self.chat_client.remove_api_key(self.selected_api_key)
             self.load_api_keys_to_gui()
+            logging.info(f"Removed API key: {self.selected_api_key}")
             self.selected_api_key = None
+        else:
+            logging.warning("Remove API key called with no key selected.")
 
     def select_api_key(self, key):
+        logging.debug(f"select_api_key called with key: {key}")
         self.selected_api_key = key
+        logging.info(f"Selected API key set to: {self.selected_api_key}")
+        self.root.ids.api_key_list.refresh_from_data()
 
     def save_project_directory(self):
         dir_path = self.root.ids.project_dir_input.text

@@ -2,14 +2,9 @@
 
 <ApiKeyButton@Button>:
     background_normal: ''
-    background_color: (0.3, 0.3, 0.3, 1)
+    background_color: (0.1, 0.5, 0.8, 1) if self.is_selected else (0.3, 0.3, 0.3, 1)
+    is_selected: True if app.selected_api_key == self.text else False
     on_press: app.select_api_key(self.text)
-    canvas.before:
-        Color:
-            rgba: (0.1, 0.5, 0.8, 1) if self.state == 'down' else (0.3, 0.3, 0.3, 1)
-        Rectangle:
-            pos: self.pos
-            size: self.size
 
 <ChatLayout>:
     orientation: 'vertical'
