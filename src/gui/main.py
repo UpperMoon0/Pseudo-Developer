@@ -88,7 +88,8 @@ class PseudoDeveloperApp(App):
     def save_project_directory(self):
         dir_path = self.root.ids.project_dir_input.text
         if not dir_path:
-            self.root.ids.chat_history.text += "[color=ff0000]Error: Please enter a directory path[/color]\n"
+            self.message_history.append(("error", "Please enter a directory path"))
+            self.update_chat_display()
             return
 
         try:
@@ -96,9 +97,11 @@ class PseudoDeveloperApp(App):
             self.project_dir = os.path.abspath(dir_path)
             self.command_executor.set_project_dir(self.project_dir)
             self.save_settings()
-            self.root.ids.chat_history.text += f"[color=00ff00]Success: Directory saved - {dir_path}[/color]\n"
+            self.message_history.append(("system", f"Success: Directory saved - {dir_path}"))
+            self.update_chat_display()
         except Exception as e:
-            self.root.ids.chat_history.text += f"[color=ff0000]Error: Failed to create directory - {str(e)}[/color]\n"
+            self.message_history.append(("error", f"Failed to create directory - {str(e)}"))
+            self.update_chat_display()
 
     def send_message(self):
         user_message = self.root.ids.message_input.text
@@ -106,7 +109,8 @@ class PseudoDeveloperApp(App):
             return
 
         if not self.project_dir:
-            self.root.ids.chat_history.text += "[color=ff0000]Please set a project directory first.[/color]\n"
+            self.message_history.append(("error", "Please set a project directory first."))
+            self.update_chat_display()
             return
 
         self.message_history.append(("user", user_message))
@@ -121,31 +125,27 @@ class PseudoDeveloperApp(App):
         try:
             tool_definitions = self.command_executor.get_tool_definitions()
             response = self.chat_client.get_response(messages, tool_definitions)
-            
+
             if isinstance(response, dict) and "message" in response:
-                error_message = response["message"]
-                logging.error(error_message)
-                Clock.schedule_once(lambda dt: self.update_ui_with_error(error_message))
-                return
+                message_text = response.get("message", "")
+                if message_text.startswith("Error:"):
+                    logging.error(message_text)
+                    Clock.schedule_once(lambda dt: self.update_ui_with_error(message_text))
+                    return
 
-            ai_message = ""
-            commands = []
-            
-            if response and hasattr(response, 'candidates') and response.candidates:
-                for part in response.candidates[0].content.parts:
-                    if part.text:
-                        ai_message += part.text
-                    if part.function_call:
-                        command = {
-                            "command": part.function_call.name,
-                            "params": dict(part.function_call.args)
-                        }
-                        commands.append(command)
+                ai_message = message_text
+                tool_calls = response.get("tool_calls", [])
 
-            Clock.schedule_once(lambda dt: self.update_ui_with_ai_message(ai_message))
+                commands = [
+                    {"command": call["name"], "params": call["args"]}
+                    for call in tool_calls
+                ]
 
-            if commands:
-                self.execute_commands(commands)
+                Clock.schedule_once(lambda dt: self.update_ui_with_ai_message(ai_message))
+
+                if commands:
+                    self.execute_commands(commands)
+
         except Exception as e:
             error_message = f"Error: {str(e)}"
             logging.error(error_message)
@@ -172,7 +172,8 @@ class PseudoDeveloperApp(App):
             self.update_chat_display()
 
     def update_ui_with_command_start(self, tool_name, params):
-        self.root.ids.chat_history.text += f"[color=ffff00]Executing command: {tool_name} with params: {params}[/color]\n"
+        self.message_history.append(("command_start", f"Executing command: {tool_name} with params: {params}"))
+        self.update_chat_display()
 
     def update_ui_with_command_result(self, result):
         if isinstance(result, dict):
@@ -184,17 +185,37 @@ class PseudoDeveloperApp(App):
                 formatted_result = "Command executed with no output."
         else:
             formatted_result = result
-        self.root.ids.chat_history.text += f"[color=00ffff]Command result: {formatted_result}[/color]\n"
+        self.message_history.append(("command_result", f"Command result: {formatted_result}"))
+        self.update_chat_display()
 
     def update_ui_with_error(self, error_message):
-        self.root.ids.chat_history.text += f"[color=ff0000]{error_message}[/color]\n"
+        self.message_history.append(("error", error_message))
+        self.update_chat_display()
 
     def update_chat_display(self):
         chat_text = ""
         for role, content in self.message_history:
-            if content:
-                color = "00ff00" if role == "user" else "ffffff"
-                chat_text += f"[color={color}]{role.capitalize()}: {content}[/color]\n"
+            if not content:
+                continue
+            
+            if role == "user":
+                color = "00ff00"
+                chat_text += f"[color={color}]User: {content}[/color]\n"
+            elif role == "assistant":
+                color = "ffffff"
+                chat_text += f"[color={color}]Assistant: {content}[/color]\n"
+            elif role == "error":
+                color = "ff0000"
+                chat_text += f"[color={color}]Error: {content}[/color]\n"
+            elif role == "system":
+                color = "00ff00"
+                chat_text += f"[color={color}]System: {content}[/color]\n"
+            elif role == "command_start":
+                color = "ffff00"
+                chat_text += f"[color={color}]{content}[/color]\n"
+            elif role == "command_result":
+                color = "00ffff"
+                chat_text += f"[color={color}]{content}[/color]\n"
         self.root.ids.chat_history.text = chat_text
 
 if __name__ == '__main__':

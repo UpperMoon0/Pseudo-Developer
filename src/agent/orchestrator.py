@@ -15,7 +15,7 @@ class Orchestrator:
     def create_plan(self):
         prompt = f"Create a step-by-step plan to achieve the following goal: {self.goal}. The plan should be a list of clear, actionable steps. Return the plan as a JSON list of strings."
         messages = [{"role": "user", "parts": [{"text": prompt}]}]
-        response = self.chat_client.get_response(messages, ".")
+        response = self.chat_client.get_response(messages, None)
         plan_str = response["message"]
         try:
             self.plan = json.loads(plan_str)
@@ -31,17 +31,18 @@ Goal: {self.goal}
 Current Step: {step}
 Available Tools: {json.dumps(tool_defs, indent=2)}
 
-Based on the current step, which tool should be used?
-Return a JSON object with "tool_name" and "arguments".
+Based on the current step, either call a tool to proceed or provide a textual response.
 """
             messages = [{"role": "user", "parts": [{"text": prompt}]}]
-            response = self.chat_client.get_response(messages, ".")
-            tool_call_str = response["message"]
-            try:
-                tool_call = json.loads(tool_call_str)
-                tool_name = tool_call["tool_name"]
-                arguments = tool_call["arguments"]
-                result = self.tool_executor.execute_tool(tool_name, **arguments)
-                print(result)
-            except (json.JSONDecodeError, KeyError):
-                print(f"Failed to process tool call. Response: {tool_call_str}")
+            response = self.chat_client.get_response(messages, tool_defs)
+
+            if response.get("tool_calls"):
+                for tool_call in response["tool_calls"]:
+                    tool_name = tool_call["name"]
+                    arguments = tool_call["args"]
+                    result = self.tool_executor.execute_tool(tool_name, **arguments)
+                    print(result)
+            elif response.get("message"):
+                print(response["message"])
+            else:
+                print("No response from model.")

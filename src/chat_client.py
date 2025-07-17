@@ -84,17 +84,32 @@ class ChatClient:
                 response = self.client.generate_content(
                     messages,
                     tools=tool_definitions,
-                    tool_config={"function_calling_config": "ANY"}
+                    tool_config={"function_calling_config": "AUTO"}
                 )
-                return response
+                
+                response_json = {
+                    "message": "",
+                    "tool_calls": []
+                }
+
+                for part in response.parts:
+                    if part.text:
+                        response_json["message"] += part.text
+                    if part.function_call:
+                        response_json["tool_calls"].append({
+                            "name": part.function_call.name,
+                            "args": dict(part.function_call.args)
+                        })
+                
+                return response_json
             except exceptions.ResourceExhausted as e:
                 if not self._cycle_key():
-                    return {"message": f"Error: {e!r}", "commands": []}
+                    return {"message": f"Error: {e!r}", "tool_calls": []}
             except Exception as e:
                 import traceback
-                return {"message": f"An unexpected error occurred: {e!r}\n{traceback.format_exc()}", "commands": []}
+                return {"message": f"An unexpected error occurred: {e!r}\n{traceback.format_exc()}", "tool_calls": []}
 
-        return {"message": "Error: All API keys failed.", "commands": []}
+        return {"message": "Error: All API keys failed.", "tool_calls": []}
 
     def get_api_keys(self):
         """
