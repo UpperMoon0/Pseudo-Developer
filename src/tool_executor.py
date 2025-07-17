@@ -24,7 +24,21 @@ class ToolExecutor:
 
     def get_tool_definitions(self):
         return [
-            {"name": tool.name, "description": tool.description}
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        param["name"]: {
+                            "type": param["type"].upper(),
+                            "description": param["description"]
+                        }
+                        for param in tool.parameters
+                    },
+                    "required": [param["name"] for param in tool.parameters if param.get("required", False)]
+                }
+            }
             for tool in self.tools.values()
         ]
 

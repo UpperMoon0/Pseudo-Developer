@@ -119,9 +119,28 @@ class ChatApp(App):
 
     def get_ai_response(self, messages):
         try:
-            response_data = self.chat_client.get_response(messages, self.project_dir)
-            ai_message = response_data.get("message", "")
-            commands = response_data.get("commands", [])
+            tool_definitions = self.command_executor.get_tool_definitions()
+            response = self.chat_client.get_response(messages, tool_definitions)
+            
+            if isinstance(response, dict) and "message" in response:
+                error_message = response["message"]
+                logging.error(error_message)
+                Clock.schedule_once(lambda dt: self.update_ui_with_error(error_message))
+                return
+
+            ai_message = ""
+            commands = []
+            
+            if response and hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if part.text:
+                        ai_message += part.text
+                    if part.function_call:
+                        command = {
+                            "command": part.function_call.name,
+                            "params": dict(part.function_call.args)
+                        }
+                        commands.append(command)
 
             Clock.schedule_once(lambda dt: self.update_ui_with_ai_message(ai_message))
 
@@ -129,6 +148,7 @@ class ChatApp(App):
                 self.execute_commands(commands)
         except Exception as e:
             error_message = f"Error: {str(e)}"
+            logging.error(error_message)
             Clock.schedule_once(lambda dt: self.update_ui_with_error(error_message))
 
     def execute_commands(self, commands):
@@ -143,6 +163,7 @@ class ChatApp(App):
                     Clock.schedule_once(lambda dt, r=result: self.update_ui_with_command_result(r))
                 except Exception as e:
                     error_message = f"Error executing command {tool_name}: {str(e)}"
+                    logging.error(error_message)
                     Clock.schedule_once(lambda dt, em=error_message: self.update_ui_with_error(em))
 
     def update_ui_with_ai_message(self, ai_message):
@@ -154,7 +175,16 @@ class ChatApp(App):
         self.root.ids.chat_history.text += f"[color=ffff00]Executing command: {tool_name} with params: {params}[/color]\n"
 
     def update_ui_with_command_result(self, result):
-        self.root.ids.chat_history.text += f"[color=00ffff]Command result: {result}[/color]\n"
+        if isinstance(result, dict):
+            formatted_result = "\n"
+            for key, value in result.items():
+                if value:
+                    formatted_result += f"  {key.capitalize()}:\n{value}\n"
+            if formatted_result == "\n":
+                formatted_result = "Command executed with no output."
+        else:
+            formatted_result = result
+        self.root.ids.chat_history.text += f"[color=00ffff]Command result: {formatted_result}[/color]\n"
 
     def update_ui_with_error(self, error_message):
         self.root.ids.chat_history.text += f"[color=ff0000]{error_message}[/color]\n"

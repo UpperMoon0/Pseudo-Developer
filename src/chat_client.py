@@ -72,7 +72,7 @@ class ChatClient:
         self.client = self._init_client()
         return True
 
-    def get_response(self, messages, project_dir):
+    def get_response(self, messages, tool_definitions):
         """
         Get a response from the Gemini API.
         """
@@ -83,35 +83,17 @@ class ChatClient:
             try:
                 response = self.client.generate_content(
                     messages,
-                    generation_config={
-                        "response_mime_type": "application/json",
-                        "response_schema": {
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string"},
-                                "commands": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "command": {"type": "string"},
-                                            "params": {"type": "object"}
-                                        },
-                                        "required": ["command"]
-                                    }
-                                }
-                            },
-                            "required": ["message", "commands"]
-                        }
-                    }
+                    tools=tool_definitions,
+                    tool_config={"function_calling_config": "ANY"}
                 )
-                return json.loads(response.text)
+                return response
             except exceptions.ResourceExhausted as e:
                 if not self._cycle_key():
-                    return {"message": f"Error: {str(e)}", "commands": []}
+                    return {"message": f"Error: {e!r}", "commands": []}
             except Exception as e:
-                return {"message": f"Error: {str(e)}", "commands": []}
-        
+                import traceback
+                return {"message": f"An unexpected error occurred: {e!r}\n{traceback.format_exc()}", "commands": []}
+
         return {"message": "Error: All API keys failed.", "commands": []}
 
     def get_api_keys(self):
