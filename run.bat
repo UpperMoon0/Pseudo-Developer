@@ -1,2 +1,2 @@
 @echo off
-conda run -n pseudo-developer python src/main.py
+conda run -n pseudo-developer python main.py

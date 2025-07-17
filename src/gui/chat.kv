@@ -1,5 +1,16 @@
 #:kivy 2.0.0
 
+<ApiKeyButton@Button>:
+    background_normal: ''
+    background_color: (0.3, 0.3, 0.3, 1)
+    on_press: app.select_api_key(self.text)
+    canvas.before:
+        Color:
+            rgba: (0.1, 0.5, 0.8, 1) if self.state == 'down' else (0.3, 0.3, 0.3, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
 <ChatLayout>:
     orientation: 'vertical'
     spacing: 10
@@ -33,6 +44,45 @@
             height: 40
             background_color: (0.1, 0.5, 0.8, 1)
             font_name: 'Roboto'
+            on_press: app.save_project_directory()
+
+    BoxLayout:
+        size_hint_y: None
+        height: 150
+        orientation: 'vertical'
+        spacing: 5
+
+        Label:
+            text: 'API Key Management'
+            size_hint_y: None
+            height: 20
+
+        RecycleView:
+            id: api_key_list
+            viewclass: 'ApiKeyButton'
+            RecycleBoxLayout:
+                default_size: None, dp(40)
+                default_size_hint: 1, None
+                size_hint_y: None
+                height: self.minimum_height
+                orientation: 'vertical'
+
+        BoxLayout:
+            size_hint_y: None
+            height: 40
+            spacing: 10
+
+            TextInput:
+                id: new_api_key_input
+                hint_text: 'Enter new API key'
+
+            Button:
+                text: 'Add Key'
+                on_press: app.add_api_key()
+
+            Button:
+                text: 'Remove Selected'
+                on_press: app.remove_api_key()
 
     ScrollView:
         size_hint: (1, 1)
@@ -58,6 +108,7 @@
             foreground_color: (1, 1, 1, 1)
             cursor_color: (1, 1, 1, 1)
             font_name: 'Roboto'
+            on_text_validate: app.send_message()
 
         Button:
             id: send_button
@@ -66,3 +117,4 @@
             height: 40
             background_color: (0.1, 0.5, 0.8, 1)
             font_name: 'Roboto'
+            on_press: app.send_message()

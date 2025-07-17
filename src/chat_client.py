@@ -6,117 +6,145 @@ This module handles the communication with the Gemini API for generating AI resp
 
 import os
 import json
-from dotenv import load_dotenv
+import platformdirs
 import google.generativeai as genai
+from google.api_core import exceptions
 
 class ChatClient:
     """
     Client for interacting with Google's Gemini API to generate AI responses.
     """
 
-    def __init__(self, api_key=None):
+    def __init__(self):
         """
-        Initialize the chat client with an optional API key.
-        
-        Args:
-            api_key (str): Optional API key for the Gemini API
+        Initialize the chat client.
         """
-        self.client = self._init_client(api_key)
+        self.keys_path = self._get_api_key_path()
+        self.api_keys = self._load_keys()
+        self.current_key_index = 0
+        self.client = self._init_client()
 
-    def _init_client(self, api_key=None):
+    def _get_api_key_path(self):
+        """
+        Get the path to the API key file.
+        """
+        app_dir = platformdirs.user_data_dir("PseudoDeveloper", "NsTut")
+        os.makedirs(app_dir, exist_ok=True)
+        return os.path.join(app_dir, "gemini-api-keys.json")
+
+    def _load_keys(self):
+        """
+        Load API keys from the JSON file.
+        """
+        if os.path.exists(self.keys_path):
+            with open(self.keys_path, 'r') as f:
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return []
+        return []
+
+    def _save_keys(self):
+        """
+        Save API keys to the JSON file.
+        """
+        with open(self.keys_path, 'w') as f:
+            json.dump(self.api_keys, f, indent=4)
+
+    def _init_client(self):
         """
         Initialize the Gemini client.
-        
-        Args:
-            api_key (str): Optional API key for the Gemini API
-        
-        Returns:
-            genai.GenerativeModel: Initialized Gemini client
         """
-        if api_key:
-            genai.configure(api_key=api_key)
-        else:
-            load_dotenv()
-            genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+        if not self.api_keys:
+            return None
         
+        genai.configure(api_key=self.api_keys[self.current_key_index])
         return genai.GenerativeModel('gemini-1.5-flash')
+
+    def _cycle_key(self):
+        """
+        Cycle to the next API key.
+        """
+        if not self.api_keys:
+            return False
+        
+        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+        self.client = self._init_client()
+        return True
 
     def get_response(self, messages, project_dir):
         """
         Get a response from the Gemini API.
-        
-        Args:
-            messages (list): List of message objects with 'role' and 'content' properties
-            project_dir (str): The project directory path to include in system message
-            
-        Returns:
-            dict: Parsed JSON response from the API, or error message
         """
-        try:
-            # Add system message with project directory information
-            system_message = {
-                "role": "system",
-                "parts": [
-                    {
-                        "text": (
-                            "You are a helpful AI coding assistant. "
-                            "You must respond to queries and help users with their code. "
-                            "Your responses should be constructive and actionable. "
-                            "Never refuse a valid request that is within your capabilities. "
-                            f"You can perform operations within the project directory: {project_dir}. "
-                            "Be careful with file system operations - no commands outside project directory."
-                        )
-                    }
-                ]
-            }
+        if not self.client:
+            return {"message": "Error: No API keys configured.", "commands": []}
 
-            # Create complete messages list with system message
-            complete_messages = [system_message] + messages
-
-            # Get response from Gemini
-            response = self.client.generate_content(
-                complete_messages,
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "response_schema": {
-                        "type": "object",
-                        "properties": {
-                            "message": {
-                                "type": "string",
-                                "description": "The main response message to display to the user"
-                            },
-                            "commands": {
-                                "type": "array",
-                                "description": "List of PowerShell commands to execute sequentially. Must be safe and within project directory.",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "command": {
-                                            "type": "string",
-                                            "description": "PowerShell command to execute"
-                                        },
-                                        "description": {
-                                            "type": "string",
-                                            "description": "Brief description of what the command does"
-                                        }
-                                    },
-                                    "required": ["command", "description"],
-                                    "additionalProperties": False
-                                }
-                            }
-                        },
-                        "required": ["message", "commands"],
-                        "additionalProperties": False
-                    }
+        for _ in range(len(self.api_keys)):
+            try:
+                system_message = {
+                    "role": "system",
+                    "parts": [{"text": f"You are a helpful AI coding assistant. You can perform operations within the project directory: {project_dir}. Be careful with file system operations."}]
                 }
-            )
+                complete_messages = [system_message] + messages
+                
+                response = self.client.generate_content(
+                    complete_messages,
+                    generation_config={
+                        "response_mime_type": "application/json",
+                        "response_schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string"},
+                                "commands": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "command": {"type": "string"},
+                                            "description": {"type": "string"}
+                                        },
+                                        "required": ["command", "description"]
+                                    }
+                                }
+                            },
+                            "required": ["message", "commands"]
+                        }
+                    }
+                )
+                return json.loads(response.text)
+            except exceptions.ResourceExhausted as e:
+                if not self._cycle_key():
+                    return {"message": f"Error: {str(e)}", "commands": []}
+            except Exception as e:
+                return {"message": f"Error: {str(e)}", "commands": []}
+        
+        return {"message": "Error: All API keys failed.", "commands": []}
 
-            # Parse JSON response
-            return json.loads(response.text)
+    def get_api_keys(self):
+        """
+        Get the list of API keys.
+        """
+        return self.api_keys
 
-        except Exception as e:
-            # Return error message
-            return {
-                "message": f"Error: {str(e)}",
-                "commands": []
-            }
+    def add_api_key(self, key):
+        """
+        Add an API key.
+        """
+        if key not in self.api_keys:
+            self.api_keys.append(key)
+            self._save_keys()
+            if len(self.api_keys) == 1:
+                self.client = self._init_client()
+
+    def remove_api_key(self, key):
+        """
+        Remove an API key.
+        """
+        if key in self.api_keys:
+            self.api_keys.remove(key)
+            self._save_keys()
+            if not self.api_keys:
+                self.client = None
+            elif self.current_key_index >= len(self.api_keys):
+                self.current_key_index = 0
+                self.client = self._init_client()

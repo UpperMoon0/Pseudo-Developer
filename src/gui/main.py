@@ -2,21 +2,47 @@ import os
 from collections import deque
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
+from kivy.properties import StringProperty
 from kivy.clock import Clock
-from command_executor import CommandExecutor
-from chat_client import ChatClient
+from src.chat_client import ChatClient
 
 class ChatLayout(BoxLayout):
     pass
 
 class ChatApp(App):
+    selected_api_key = StringProperty(None, allownone=True)
+
     def build(self):
         self.message_history = deque(maxlen=20)
         self.project_dir = None
-        self.command_executor = CommandExecutor()
         self.chat_client = ChatClient()
         
-        return ChatLayout()
+        layout = ChatLayout()
+        Clock.schedule_once(self.after_build)
+        return layout
+
+    def after_build(self, dt):
+        self.load_api_keys_to_gui()
+
+    def load_api_keys_to_gui(self):
+        keys = self.chat_client.get_api_keys()
+        self.root.ids.api_key_list.data = [{'text': key} for key in keys]
+
+    def add_api_key(self):
+        new_key = self.root.ids.new_api_key_input.text
+        if new_key:
+            self.chat_client.add_api_key(new_key)
+            self.load_api_keys_to_gui()
+            self.root.ids.new_api_key_input.text = ""
+
+    def remove_api_key(self):
+        if self.selected_api_key:
+            self.chat_client.remove_api_key(self.selected_api_key)
+            self.load_api_keys_to_gui()
+            self.selected_api_key = None
+
+    def select_api_key(self, key):
+        self.selected_api_key = key
 
     def save_project_directory(self):
         dir_path = self.root.ids.project_dir_input.text
@@ -44,7 +70,7 @@ class ChatApp(App):
         self.message_history.append(("user", user_message))
         self.update_chat_display()
         
-        messages = [{"role": role, "content": content} for role, content in self.message_history]
+        messages = [{"role": "user", "parts": [{"text": content}]} for role, content in self.message_history if role == "user"]
         
         Clock.schedule_once(lambda dt: self.get_ai_response(messages))
         self.root.ids.message_input.text = ""
@@ -55,20 +81,8 @@ class ChatApp(App):
             ai_message = response_data["message"]
             self.message_history.append(("assistant", ai_message))
             self.update_chat_display()
-
-            if 'commands' in response_data and response_data['commands']:
-                results = self.command_executor.execute_commands(response_data['commands'])
-                self.process_command_results(results)
         except Exception as e:
             self.root.ids.chat_history.text += f"[color=ff0000]Error: {str(e)}[/color]\n"
-
-    def process_command_results(self, results):
-        for result in results:
-            self.root.ids.chat_history.text += f"[color=00ffff]Command: {result['command']}[/color]\n"
-            if result['stdout']:
-                self.root.ids.chat_history.text += f"Output: {result['stdout']}\n"
-            if result['stderr']:
-                self.root.ids.chat_history.text += f"Error: {result['stderr']}\n"
 
     def update_chat_display(self):
         chat_text = ""
