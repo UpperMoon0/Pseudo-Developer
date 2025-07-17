@@ -1,11 +1,11 @@
 import json
 from src.chat_client import ChatClient
-from src.command_executor import CommandExecutor
+from src.tool_executor import ToolExecutor
 
 class Orchestrator:
-    def __init__(self, chat_client: ChatClient, command_executor: CommandExecutor):
+    def __init__(self, chat_client: ChatClient, tool_executor: ToolExecutor):
         self.chat_client = chat_client
-        self.command_executor = command_executor
+        self.tool_executor = tool_executor
         self.goal = None
         self.plan = []
 
@@ -20,10 +20,18 @@ class Orchestrator:
 
     def execute_plan(self):
         for step in self.plan:
-            prompt = f"Goal: {self.goal}\nCurrent Step: {step}\n\nGenerate the commands to complete this step. If no commands are needed, return an empty list."
+            tool_defs = self.tool_executor.get_tool_definitions()
+            prompt = f"""
+Goal: {self.goal}
+Current Step: {step}
+Available Tools: {json.dumps(tool_defs, indent=2)}
+
+Based on the current step, which tool should be used?
+Return a JSON object with "tool_name" and "arguments".
+"""
             response = self.chat_client.send_message(prompt)
-            commands = response.get("commands", [])
-            if commands:
-                for command in commands:
-                    output = self.command_executor.execute_command(command)
-                    print(output)
+            tool_call = json.loads(response["message"])
+            tool_name = tool_call["tool_name"]
+            arguments = tool_call["arguments"]
+            result = self.tool_executor.execute_tool(tool_name, arguments)
+            print(result)

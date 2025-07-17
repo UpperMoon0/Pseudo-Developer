@@ -1,5 +1,6 @@
 import inspect
 import pkgutil
+import importlib
 from src.tools.base import Tool
 import src.tools
 
@@ -9,8 +10,8 @@ class ToolExecutor:
         self._discover_tools()
 
     def _discover_tools(self):
-        for importer, modname, ispkg in pkgutil.walk_packages(src.tools.__path__, src.tools.__name__ + '.'):
-            module = __import__(modname, fromlist='dummy')
+        for _, modname, _ in pkgutil.walk_packages(src.tools.__path__, src.tools.__name__ + '.'):
+            module = importlib.import_module(modname)
             for name, obj in inspect.getmembers(module):
                 if inspect.isclass(obj) and issubclass(obj, Tool) and obj is not Tool:
                     tool_instance = obj()
