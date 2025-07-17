@@ -81,14 +81,8 @@ class ChatClient:
 
         for _ in range(len(self.api_keys)):
             try:
-                system_message = {
-                    "role": "system",
-                    "parts": [{"text": f"You are a helpful AI coding assistant. You can perform operations within the project directory: {project_dir}. Be careful with file system operations."}]
-                }
-                complete_messages = [system_message] + messages
-                
                 response = self.client.generate_content(
-                    complete_messages,
+                    messages,
                     generation_config={
                         "response_mime_type": "application/json",
                         "response_schema": {
@@ -101,9 +95,9 @@ class ChatClient:
                                         "type": "object",
                                         "properties": {
                                             "command": {"type": "string"},
-                                            "description": {"type": "string"}
+                                            "params": {"type": "object"}
                                         },
-                                        "required": ["command", "description"]
+                                        "required": ["command"]
                                     }
                                 }
                             },

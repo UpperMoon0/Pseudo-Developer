@@ -11,11 +11,11 @@ class ExecuteShellCommandTool(Tool):
             description="Executes a shell command on the user's operating system."
         )
 
-    def execute(self, command: str) -> dict:
+    def execute(self, command: str, cwd: str = None) -> dict:
         """
         Executes the given shell command.
         """
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=cwd)
         return {
             "stdout": result.stdout,
             "stderr": result.stderr
